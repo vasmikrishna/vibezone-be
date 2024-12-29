@@ -34,6 +34,14 @@ function generateId() {
   return Math.random().toString(36).substring(2, 9);
 }
 
+function logUsers() {
+  console.log('all socket ids', Object.keys(userSockets));  
+
+  console.log(`[Server] Waiting queue: ${waitingQueue}, length: ${waitingQueue.length}`);
+  console.log('[Server] Current partner: ', currentPartner,);
+
+}
+
 /** 3. Handle new WebSocket connections */
 wss.on('connection', (ws) => {
   // Mark isAlive for ping/pong
@@ -52,12 +60,10 @@ wss.on('connection', (ws) => {
 
   // Place the user in the waiting queue
   addUserToQueue(userId);
+  logUsers();
 
   // Optional: Send a "connected" message
   ws.send(JSON.stringify({ type: 'connected', msg: `User connected: ${userId}` }));
-
-  console.log(`[Server] Waiting queue: ${waitingQueue}`);
-  console.log('[Server] Current partner: ', currentPartner);
 
   /** Handle incoming WebSocket messages */
   ws.on('message', (msg) => {
@@ -81,14 +87,19 @@ wss.on('connection', (ws) => {
             from: userId
           }));
         }
+        logUsers();
         break;
 
       case 'skip':
         handleSkip(userId);
+        console.log('Skipped');
+        logUsers();
         break;
 
       case 'hangup':
         handleHangup(userId);
+        console.log('Hangup');
+        logUsers();
         break;
     }
   });
