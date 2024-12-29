@@ -73,7 +73,7 @@ wss.on('connection', (ws) => {
       case 'offer':
       case 'answer':
       case 'candidate':
-        console.log('sending candidates')
+        console.log('sending candidates', JSON.stringify(data));
         // Forward the event to the intended "to" user
         if (data.to && userSockets[data.to]) {
           userSockets[data.to].send(JSON.stringify({
@@ -147,8 +147,8 @@ function tryMatch() {
     currentPartner[userB] = userA;
 
     // Tell them to start negotiating (exchange offers/answers)
-    userSockets[userA].send(JSON.stringify({ type: 'matched', partnerId: userB , role: 'caller'}));
-    userSockets[userB].send(JSON.stringify({ type: 'matched', partnerId: userA }));
+    userSockets[userA]?.send(JSON.stringify({ type: 'matched', partnerId: userB , role: 'caller'}));
+    userSockets[userB]?.send(JSON.stringify({ type: 'matched', partnerId: userA }));
   }
 }
 
