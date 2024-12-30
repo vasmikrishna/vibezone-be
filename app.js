@@ -55,6 +55,7 @@ wss.on('connection', (ws) => {
   // Generate a userId for each new connection
   const userId = generateId();
   userSockets[userId] = ws;
+  userSockets[userId]['status'] = 'free';
 
   console.log(`[Server] User connected: ${userId}`);
 
@@ -83,7 +84,7 @@ wss.on('connection', (ws) => {
       case 'candidate':
         console.log('sending candidates', JSON.stringify(data));
         // Forward the event to the intended "to" user
-        if (data.to && userSockets[data.to]) {
+        if (data.to && userSockets[data.to] && userSockets[data.to]?.status !== 'matched') {
           userSockets[data.to].send(JSON.stringify({
             ...data,
             from: userId
@@ -109,9 +110,11 @@ wss.on('connection', (ws) => {
   /** Handle socket close/disconnect */
   ws.on('close', () => {
     console.log(`[Server] User disconnected: ${userId}`);
+    
     handleHangup(userId);      // Free up partner, if any
     removeFromQueue(userId);   // Remove from waiting queue
     delete userSockets[userId];
+    logUsers();
   });
 });
 
@@ -131,6 +134,7 @@ const interval = setInterval(() => {
 // On server shutdown, clear the interval
 wss.on('close', () => {
   clearInterval(interval);
+  logUsers();
 });
 
 /** Add user to queue */
@@ -161,11 +165,13 @@ function tryMatch() {
 
     // Tell them to start negotiating (exchange offers/answers)
     const activeUsers = Object.keys(userSockets).length;
-    console.log('Active users:', activeUsers);
+    // console.log('Active users:', activeUsers);
     userSockets[userA]?.send(JSON.stringify({ type: 'matched', partnerId: userB , role: 'caller'}));
     userSockets[userB]?.send(JSON.stringify({ type: 'matched', partnerId: userA }));
     userSockets[userA]?.send(JSON.stringify({ type: 'activeUsers', value: activeUsers}));
     userSockets[userB]?.send(JSON.stringify({ type: 'activeUsers', value: activeUsers}));
+    userSockets[userA]['status'] = 'matched';
+    userSockets[userB]['status'] = 'matched';
   }
 }
 
@@ -186,6 +192,9 @@ function handleHangup(userId) {
     if (partnerSocket) {
       partnerSocket.send(JSON.stringify({ type: 'hangup' }));
     }
+
+    userSockets[userId]['status'] = 'free';
+    userSockets[partnerId]['status'] = 'free';
     // add partner to waiting queue
     addUserToQueue(partnerId);
     // Break both sides
