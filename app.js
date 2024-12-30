@@ -62,6 +62,8 @@ wss.on('connection', (ws) => {
   addUserToQueue(userId);
   logUsers();
 
+  ws.send(JSON.stringify({ type: 'activeUsers', value: Object.keys(userSockets).length}));
+
   // Optional: Send a "connected" message
   ws.send(JSON.stringify({ type: 'connected', msg: `User connected: ${userId}` }));
 
@@ -158,8 +160,12 @@ function tryMatch() {
     currentPartner[userB] = userA;
 
     // Tell them to start negotiating (exchange offers/answers)
+    const activeUsers = Object.keys(userSockets).length;
+    console.log('Active users:', activeUsers);
     userSockets[userA]?.send(JSON.stringify({ type: 'matched', partnerId: userB , role: 'caller'}));
     userSockets[userB]?.send(JSON.stringify({ type: 'matched', partnerId: userA }));
+    userSockets[userA]?.send(JSON.stringify({ type: 'activeUsers', value: activeUsers}));
+    userSockets[userB]?.send(JSON.stringify({ type: 'activeUsers', value: activeUsers}));
   }
 }
 
