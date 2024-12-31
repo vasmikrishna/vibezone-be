@@ -28,6 +28,7 @@ server.listen(3001, () => {
 let waitingQueue = [];        // array of userIds
 let userSockets = {};         // { userId: ws }
 let currentPartner = {};      // { userId: partnerId }
+let connectedSockets = {};    
 
 /** Helper to generate a random user ID */
 function generateId() {
@@ -36,10 +37,8 @@ function generateId() {
 
 function logUsers() {
   console.log('all socket ids', Object.keys(userSockets));  
-
   console.log(`[Server] Waiting queue: ${waitingQueue}, length: ${waitingQueue.length}`);
   console.log('[Server] Current partner: ', currentPartner,);
-
 }
 
 /** 3. Handle new WebSocket connections */
@@ -65,7 +64,7 @@ wss.on('connection', (ws) => {
   ws.send(JSON.stringify({ type: 'activeUsers', value: Object.keys(userSockets).length}));
 
   // Optional: Send a "connected" message
-  ws.send(JSON.stringify({ type: 'connected', msg: `User connected: ${userId}` }));
+  ws.send(JSON.stringify({ type: 'connected',id: userId.toString()}));
 
   /** Handle incoming WebSocket messages */
   ws.on('message', (msg) => {
@@ -81,7 +80,7 @@ wss.on('connection', (ws) => {
       case 'offer':
       case 'answer':
       case 'candidate':
-        console.log('sending candidates', JSON.stringify(data));
+        // console.log('sending candidates', JSON.stringify(data));
         // Forward the event to the intended "to" user
         if (data.to && userSockets[data.to] ) {
           userSockets[data.to].send(JSON.stringify({
@@ -89,7 +88,6 @@ wss.on('connection', (ws) => {
             from: userId
           }));
         }
-        logUsers();
         break;
 
       case 'skip':
@@ -153,47 +151,71 @@ function removeFromQueue(userId) {
 }
 
 /** Try to match any two waiting users */
-function tryMatch() {
+async function tryMatch() {
   while (waitingQueue.length >= 2) {
     const userA = waitingQueue.shift();
     const userB = waitingQueue.shift();
 
-    // Mark them as partners
-    currentPartner[userA] = userB;
-    currentPartner[userB] = userA;
+    const userASocket = userSockets[userA];
+    const userBSocket = userSockets[userB];
 
-    // Tell them to start negotiating (exchange offers/answers)
-    const activeUsers = Object.keys(userSockets).length;
-    // console.log('Active users:', activeUsers);
-    userSockets[userA]?.send(JSON.stringify({ type: 'matched', partnerId: userB , role: 'caller'}));
-    userSockets[userB]?.send(JSON.stringify({ type: 'matched', partnerId: userA }));
-    userSockets[userA]?.send(JSON.stringify({ type: 'activeUsers', value: activeUsers}));
-    userSockets[userB]?.send(JSON.stringify({ type: 'activeUsers', value: activeUsers}));
+    // Skip matching if sockets are invalid or users are already partnered
+    if (!userASocket || !userBSocket || currentPartner[userA] || currentPartner[userB]) {
+      if (userASocket && !currentPartner[userA]) waitingQueue.push(userA);
+      if (userBSocket && !currentPartner[userB]) waitingQueue.push(userB);
+      continue;
+    }
+
+    try {
+      // Mark users as partners
+      currentPartner[userA] = userB;
+      currentPartner[userB] = userA;
+
+      // Notify users of the match
+      const activeUsers = Object.keys(userSockets).length;
+      const userAData = JSON.stringify({ type: 'matched', partnerId: userB, role: 'caller' });
+      const userBData = JSON.stringify({ type: 'matched', partnerId: userA });
+      const activeUsersData = JSON.stringify({ type: 'activeUsers', value: activeUsers });
+
+      await Promise.all([
+        userASocket.send(userAData),
+        userBSocket.send(userBData),
+        userASocket.send(activeUsersData),
+        userBSocket.send(activeUsersData),
+      ]);
+    } catch (error) {
+      console.error('[Server] Error while sending match data:', error);
+
+      // Requeue users in case of transient errors
+      if (userASocket) waitingQueue.push(userA);
+      if (userBSocket) waitingQueue.push(userB);
+    }
   }
 }
 
+
 /** Skip logic */
 function handleSkip(userId) {
-  // End current call if any
   handleHangup(userId);
-  // Put user back into queue
   addUserToQueue(userId);
 }
 
-/** Hang up logic (end call, remove partner relationship) */
-function handleHangup(userId) {
+/** Hang up logic (end call, remove partner relationship) */function handleHangup(userId) {
   const partnerId = currentPartner[userId];
   if (partnerId) {
-    // Notify partner to close
     const partnerSocket = userSockets[partnerId];
     if (partnerSocket) {
       partnerSocket.send(JSON.stringify({ type: 'hangup' }));
     }
 
-    // add partner to waiting queue
-    addUserToQueue(partnerId);
-    // Break both sides
     delete currentPartner[partnerId];
     delete currentPartner[userId];
+
+    // Add random delay between 5 to 10 seconds before adding to the queue
+    const delay = Math.floor(Math.random() * (10 - 5 + 1) + 5) * 1000;
+    setTimeout(() => {
+      addUserToQueue(partnerId);
+    }, delay);
   }
 }
+
