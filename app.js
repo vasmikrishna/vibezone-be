@@ -1,14 +1,35 @@
-/**
- * server.js
- *
- * 1) Creates an HTTP server on port 3001.
- * 2) Attaches a WebSocket server (ws) to it.
- * 3) Handles a waiting queue + skip + hangup logic for a Chatroulette-like app.
- * 4) Implements server-side ping/pong keepalive and cleans up partners on disconnect.
- */
-
 const http = require('http');
 const WebSocket = require('ws');
+require('dotenv').config();
+const mongoose = require('mongoose');
+
+
+
+const SessionModel = require('./src/models/connections');
+const Connection = require('./src/models/matches');
+
+
+const mongoURI = process.env.MONGO_URI;
+// const mongoURI = 'mongodb+srv://vamsi:zUm1jwBewRfzb4QA@cluster0.g72xb.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'
+console.log('mongoURI', mongoURI);
+
+// Function to connect to MongoDB
+const connectDB = async () => {
+  try {
+      await mongoose.connect(mongoURI, {
+          useNewUrlParser: true,
+          useUnifiedTopology: true,
+      });
+      console.log('MongoDB connected successfully');
+  } catch (error) {
+      console.error('Error connecting to MongoDB:', error.message);
+      process.exit(1); // Exit process with failure
+  }
+};
+
+connectDB();
+
+
 
 /** 1. Create an HTTP server */
 const server = http.createServer((req, res) => {
@@ -32,7 +53,7 @@ let connectedSockets = {};
 
 /** Helper to generate a random user ID */
 function generateId() {
-  return Math.random().toString(36).substring(2, 9);
+  return Math.random().toString(36).substring(2, 15);
 }
 
 function logUsers() {
@@ -59,6 +80,13 @@ wss.on('connection', (ws) => {
 
   // Place the user in the waiting queue
   addUserToQueue(userId);
+  try {
+    const user = new SessionModel({ sessionId: userId, startTime: new Date() });
+    user.save();
+  } catch (e) {
+    console.error('Error saving user:', e);
+  }
+
   logUsers();
 
   ws.send(JSON.stringify({ type: 'activeUsers', value: Object.keys(userSockets).length}));
@@ -105,12 +133,14 @@ wss.on('connection', (ws) => {
   });
 
   /** Handle socket close/disconnect */
-  ws.on('close', () => {
+  ws.on('close', async () => {
     console.log(`[Server] User disconnected: ${userId}`);
     
     handleHangup(userId);      // Free up partner, if any
     removeFromQueue(userId);   // Remove from waiting queue
     delete userSockets[userId];
+
+    await SessionModel.findOneAndUpdate({ sessionId: userId }, { $set: { endTime: new Date() } });
     logUsers();
   });
 });
@@ -168,14 +198,19 @@ async function tryMatch() {
 
     try {
       // Mark users as partners
-      currentPartner[userA] = userB;
-      currentPartner[userB] = userA;
+      currentPartner[userA] = {id:userB, startTime: new Date()};
+      currentPartner[userB] = {id:userA, startTime: new Date()};
 
       // Notify users of the match
       const activeUsers = Object.keys(userSockets).length;
       const userAData = JSON.stringify({ type: 'matched', partnerId: userB, role: 'caller' });
       const userBData = JSON.stringify({ type: 'matched', partnerId: userA });
       const activeUsersData = JSON.stringify({ type: 'activeUsers', value: activeUsers });
+
+      const match = new Connection({ userId:userA, partnerId:userB });
+      match.save();
+
+
 
       await Promise.all([
         userASocket.send(userAData),
@@ -200,13 +235,17 @@ function handleSkip(userId) {
   addUserToQueue(userId);
 }
 
-/** Hang up logic (end call, remove partner relationship) */function handleHangup(userId) {
-  const partnerId = currentPartner[userId];
+function handleHangup(userId) {
+  const partnerId = currentPartner[userId]?.id;
+
   if (partnerId) {
     const partnerSocket = userSockets[partnerId];
     if (partnerSocket) {
       partnerSocket.send(JSON.stringify({ type: 'hangup' }));
     }
+    
+    const data = new Connection({ userId: userId, partnerId: partnerId, callDuration: new Date() - currentPartner[userId].startTime });
+    data.save();
 
     delete currentPartner[partnerId];
     delete currentPartner[userId];
