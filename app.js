@@ -2,11 +2,16 @@ const http = require('http');
 const WebSocket = require('ws');
 require('dotenv').config();
 const mongoose = require('mongoose');
+const express = require('express');
+const bodyParser = require('body-parser');
+const cors = require('cors');
 
 
 
 const SessionModel = require('./src/models/connections');
 const Connection = require('./src/models/matches');
+
+const earlyBirdAccessRoutes = require('./src/routes/earlyBirdAccessRoutes');
 
 
 const mongoURI = process.env.MONGO_URI;
@@ -30,20 +35,23 @@ const connectDB = async () => {
 connectDB();
 
 
-
+const app = express();
+app.use(bodyParser.json());
+app.use(cors());
 /** 1. Create an HTTP server */
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/html' });
-  res.end('<h1>WebSocket Signaling Server is Running on HTTP</h1>');
-});
+const server = http.createServer(app);
 
 /** 2. Attach WebSocket server to the same HTTP server */
 const wss = new WebSocket.Server({ server });
 
-/** Start listening */
-server.listen(3001, () => {
-  console.log('[Server] HTTP and WebSocket server running on http://localhost:3001');
-});
+// Routes
+app.use('/api', earlyBirdAccessRoutes);
+
+app.get('/', (req, res) => {
+  res.send('Hello, World!');
+})
+
+
 
 /** Data structures for matchmaking */
 let waitingQueue = [];        // array of userIds
@@ -258,3 +266,10 @@ function handleHangup(userId) {
   }
 }
 
+
+
+/** Start HTTP and WebSocket server */
+const PORT = 3001;
+server.listen(PORT, () => {
+  console.log(`[Server] HTTP and WebSocket server running on http://localhost:${PORT}`);
+});
