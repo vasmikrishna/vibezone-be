@@ -58,11 +58,46 @@ let waitingQueue = [];        // array of userIds
 let userSockets = {};         // { userId: ws }
 let currentPartner = {};      // { userId: partnerId }
 let connectedSockets = {};    
+let activeUsers = 0;
 
 /** Helper to generate a random user ID */
 function generateId() {
   return Math.random().toString(36).substring(2, 15);
 }
+
+// Function to broadcast active user count to all connected clients
+function broadcastActiveUserCount() {
+  const message = JSON.stringify({
+    type: 'activeUsers',
+    value: activeUserCount,
+  });
+
+  wss.clients.forEach((ws) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(message);
+    }
+  });
+}
+
+// Function to update the active user count and broadcast every 10 seconds
+function updateActiveUserCount() {
+  activeUserCount = wss.clients.size; // Update active user count from WebSocket clients
+  console.log(`[Server] Active user count: ${activeUserCount}`);
+
+  // Throttle broadcast every 10 seconds
+  if (!updateActiveUserCount.broadcasting) {
+    updateActiveUserCount.broadcasting = true;
+    broadcastActiveUserCount();
+    setTimeout(() => {
+      updateActiveUserCount.broadcasting = false;
+    }, 1000); // Broadcast every 10 seconds
+  }
+}
+
+setInterval(() => {
+  updateActiveUserCount(); 
+}, 10000)
+// Update and throttle the broadcast
 
 function logUsers() {
   console.log('all socket ids', Object.keys(userSockets));  
@@ -115,15 +150,6 @@ wss.on('connection', (ws) => {
     switch (data.type) {
       case 'offer':
       case 'answer':
-      case 'networkQualityUpdate': 
-        // Forward the event to the intended "to" user
-        if (data.to && userSockets[data.to] ) {
-          userSockets[data.to].send(JSON.stringify({
-            ...data,
-            from: userId
-          }));
-        }
-        break;
       case 'candidate':
         // console.log('sending candidates', JSON.stringify(data));
         // Forward the event to the intended "to" user
@@ -134,13 +160,20 @@ wss.on('connection', (ws) => {
           }));
         }
         break;
-
       case 'skip':
         handleSkip(userId);
         console.log('Skipped');
         logUsers();
         break;
-
+      case 'networkQualityUpdate': 
+        console.log('recived data of network', data.to, data.quality);
+        if (data.to && userSockets[data.to] ) {
+          userSockets[data.to].send(JSON.stringify({
+            type: 'networkQualityUpdate',
+            quality: data.quality,
+          }));
+        }
+        break;
       case 'hangup':
         handleHangup(userId);
         console.log('Hangup');
@@ -219,7 +252,7 @@ async function tryMatch() {
       currentPartner[userB] = {id:userA, startTime: new Date()};
 
       // Notify users of the match
-      const activeUsers = Object.keys(userSockets).length;
+      activeUsers = Object.keys(userSockets).length;
       const userAData = JSON.stringify({ type: 'matched', partnerId: userB, role: 'caller' });
       const userBData = JSON.stringify({ type: 'matched', partnerId: userA });
       const activeUsersData = JSON.stringify({ type: 'activeUsers', value: activeUsers });
