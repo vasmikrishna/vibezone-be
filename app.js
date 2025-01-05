@@ -115,6 +115,15 @@ wss.on('connection', (ws) => {
     switch (data.type) {
       case 'offer':
       case 'answer':
+      case 'networkQualityUpdate': 
+        // Forward the event to the intended "to" user
+        if (data.to && userSockets[data.to] ) {
+          userSockets[data.to].send(JSON.stringify({
+            ...data,
+            from: userId
+          }));
+        }
+        break;
       case 'candidate':
         // console.log('sending candidates', JSON.stringify(data));
         // Forward the event to the intended "to" user
