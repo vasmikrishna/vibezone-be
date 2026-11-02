@@ -9,6 +9,10 @@ if (!process.env.MONGO_URI) {
   console.error('MONGO_URI is required');
   process.exit(1);
 }
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || !process.env.OTP_SECRET)) {
+  console.error('JWT_SECRET and OTP_SECRET are required in production');
+  process.exit(1);
+}
 
 async function main() {
   try {

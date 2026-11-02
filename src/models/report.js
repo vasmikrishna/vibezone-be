@@ -4,6 +4,7 @@ const reportSchema = new mongoose.Schema({
   reporterDevice: { type: String, required: true },
   reportedDevice: { type: String, required: true, index: true },
   reason: { type: String, required: true },
+  roomId: { type: mongoose.Schema.Types.ObjectId, index: true }, // set for reports from private rooms
   // Last chat lines of the reported call, kept only because a report was filed.
   evidence: [
     {

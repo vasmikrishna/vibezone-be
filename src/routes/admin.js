@@ -5,6 +5,8 @@ const Report = require('../models/report');
 const Ban = require('../models/ban');
 const { UUID } = require('../signalling');
 
+const OBJECT_ID = /^[0-9a-f]{24}$/i; // a user id from a room report
+
 const digest = (value) => crypto.createHash('sha256').update(value).digest();
 
 /** Admin API guarded by the x-admin-token header. onBan(deviceId, until) kicks live sockets. */
@@ -28,8 +30,8 @@ function adminRoutes(adminToken, onBan) {
 
   router.post('/bans', async (req, res) => {
     const { deviceId, hours } = req.body || {};
-    if (typeof deviceId !== 'string' || !UUID.test(deviceId) || typeof hours !== 'number' || !(hours > 0)) {
-      return res.status(400).json({ error: 'deviceId (uuid) and hours (> 0) are required' });
+    if (typeof deviceId !== 'string' || !(UUID.test(deviceId) || OBJECT_ID.test(deviceId)) || typeof hours !== 'number' || !(hours > 0)) {
+      return res.status(400).json({ error: 'deviceId (uuid or user id) and hours (> 0) are required' });
     }
     const id = deviceId.toLowerCase();
     const until = new Date(Date.now() + hours * 60 * 60 * 1000);

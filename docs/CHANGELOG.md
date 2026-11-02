@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased (private rooms, #6)
+
+- Accounts: phone OTP login (`/api/auth/otp`, `/api/auth/verify`) with 30-day HS256 JWTs; codes are 6 digits from `crypto.randomInt`, stored only as an HMAC with `OTP_SECRET`, expire after 5 minutes (TTL index) and lock after 5 attempts; 3 sends per phone and 10 per IP an hour.
+- `src/sms.js`: SMS provider via `SMS_API_URL`/`SMS_API_KEY`; outside production the code is printed; production without a provider returns 503. Phone numbers are never logged.
+- Profile `GET/PATCH/DELETE /api/me`: date of birth set once, under-18 rejected and the phone blocked from rooms; deletion removes tickets and cancels hosted rooms.
+- Private rooms: create, list, free tickets with atomic no-overbooking, cancel, report.
+- WebSocket `roomJoin`, `roomState`, `roomNext`, `roomEnd`, timed 1-to-1 turns, in-room block and report. Random matching is unchanged.
+- The server refuses to start in production without `JWT_SECRET` and `OTP_SECRET`.
+
 ## Unreleased (launch-ready, #5)
 
 - Text chat: `chat {text}` (1–500 chars, max 2 a second) is word-filtered (`src/filter.js`), forwarded to the partner and echoed as `chatSent`.

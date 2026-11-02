@@ -61,7 +61,53 @@ const FORWARD = {
   networkQualityUpdate: (data) => QUALITIES.includes(data.quality) && { quality: data.quality },
 };
 
-function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs = 1000, env = process.env }) {
+/** Shared by random chat and rooms: a client has ws, deviceId, partner, chatTimes and chatLog. */
+function forward(client, data) {
+  const fields = FORWARD[data.type](data);
+  if (!fields) return send(client.ws, { type: 'error', message: `invalid ${data.type}` });
+  if (client.partner) send(client.partner.ws, { type: data.type, ...fields });
+}
+
+function chat(client, data) {
+  const text = typeof data.text === 'string' ? data.text.trim() : '';
+  if (!text || text.length > MAX_CHAT_LENGTH) return send(client.ws, { type: 'error', message: 'invalid chat' });
+  const t = Date.now();
+  client.chatTimes = client.chatTimes.filter((at) => t - at < 1000);
+  if (client.chatTimes.length >= CHAT_PER_SECOND) return send(client.ws, { type: 'error', message: 'chat rate limit' });
+  client.chatTimes.push(t);
+  if (!client.partner) return send(client.ws, { type: 'error', message: 'not in a call' });
+
+  const clean = filterText(text);
+  client.chatLog.push({ from: client.deviceId, text: clean, at: new Date(t) });
+  if (client.chatLog.length > CHAT_LOG_LINES) client.chatLog.shift();
+  send(client.partner.ws, { type: 'chat', text: clean });
+  send(client.ws, { type: 'chatSent', text: clean });
+}
+
+/** The call's chat lines as report evidence. */
+const evidence = (client) =>
+  client.chatLog.map((line) => ({
+    sender: line.from === client.deviceId ? 'reporter' : 'reported',
+    text: line.text,
+    at: line.at,
+  }));
+
+/** Bans a device or user for a day once enough people reported it. Returns the end of the ban, if any. */
+async function autoBan(deviceId) {
+  try {
+    const since = new Date(Date.now() - DAY_MS);
+    const reporters = await Report.distinct('reporterDevice', { reportedDevice: deviceId, createdAt: { $gte: since } });
+    if (reporters.length < REPORTS_TO_BAN) return null;
+    const until = new Date(Date.now() + DAY_MS);
+    await Ban.updateOne({ deviceId }, { until, reason: 'auto: reports' }, { upsert: true });
+    return until;
+  } catch (err) {
+    logDbError(err);
+    return null;
+  }
+}
+
+function createSignalling({ server, rooms, allowedOrigins = [], waitMs = 10000, tickMs = 1000, env = process.env }) {
   const wss = new WebSocket.Server({
     server,
     maxPayload: 64 * 1024,
@@ -123,16 +169,8 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
   }
 
   async function checkAutoBan(deviceId) {
-    try {
-      const since = new Date(Date.now() - DAY_MS);
-      const reporters = await Report.distinct('reporterDevice', { reportedDevice: deviceId, createdAt: { $gte: since } });
-      if (reporters.length < REPORTS_TO_BAN) return;
-      const until = new Date(Date.now() + DAY_MS);
-      await Ban.updateOne({ deviceId }, { until, reason: 'auto: reports' }, { upsert: true });
-      kick(deviceId, until);
-    } catch (err) {
-      logDbError(err);
-    }
+    const until = await autoBan(deviceId);
+    if (until) kick(deviceId, until);
   }
 
   function block(client) {
@@ -194,23 +232,11 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
     enqueue(client);
   }
 
-  function chat(client, data) {
-    const text = typeof data.text === 'string' ? data.text.trim() : '';
-    if (!text || text.length > MAX_CHAT_LENGTH) return send(client.ws, { type: 'error', message: 'invalid chat' });
-    const t = Date.now();
-    client.chatTimes = client.chatTimes.filter((at) => t - at < 1000);
-    if (client.chatTimes.length >= CHAT_PER_SECOND) return send(client.ws, { type: 'error', message: 'chat rate limit' });
-    client.chatTimes.push(t);
-    if (!client.partner) return send(client.ws, { type: 'error', message: 'not in a call' });
-
-    const clean = filterText(text);
-    client.chatLog.push({ from: client.deviceId, text: clean, at: new Date(t) });
-    if (client.chatLog.length > CHAT_LOG_LINES) client.chatLog.shift();
-    send(client.partner.ws, { type: 'chat', text: clean });
-    send(client.ws, { type: 'chatSent', text: clean });
-  }
-
   function handle(ws, data) {
+    if (data.type === 'roomJoin' || ws.member) {
+      if (ws.client) return send(ws, { type: 'error', message: 'already joined' });
+      return rooms.handle(ws, data);
+    }
     const client = ws.client;
     if (data.type === 'join') {
       if (client || ws.joining) return send(ws, { type: 'error', message: 'already joined' });
@@ -218,12 +244,7 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
     }
     if (!client) return send(ws, { type: 'error', message: 'join first' });
 
-    if (FORWARD[data.type]) {
-      const fields = FORWARD[data.type](data);
-      if (!fields) return send(ws, { type: 'error', message: `invalid ${data.type}` });
-      if (client.partner) send(client.partner.ws, { type: data.type, ...fields });
-      return;
-    }
+    if (FORWARD[data.type]) return forward(client, data);
 
     switch (data.type) {
       case 'chat':
@@ -232,12 +253,7 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
         if (!REASONS.includes(data.reason)) return send(ws, { type: 'error', message: 'invalid reason' });
         if (client.partner) {
           const reportedDevice = client.partner.deviceId;
-          const evidence = client.chatLog.map((line) => ({
-            sender: line.from === client.deviceId ? 'reporter' : 'reported',
-            text: line.text,
-            at: line.at,
-          }));
-          new Report({ reporterDevice: client.deviceId, reportedDevice, reason: data.reason, evidence })
+          new Report({ reporterDevice: client.deviceId, reportedDevice, reason: data.reason, evidence: evidence(client) })
             .save()
             .then(() => checkAutoBan(reportedDevice), logDbError);
         }
@@ -290,6 +306,7 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
 
     ws.on('close', () => {
       if (ws.client) detach(ws.client);
+      if (ws.member) rooms.leave(ws.member);
       SessionModel.updateOne({ sessionId }, { $set: { endTime: new Date() } }).catch(logDbError);
     });
 
@@ -317,4 +334,4 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
   return { wss, kick };
 }
 
-module.exports = { createSignalling, UUID };
+module.exports = { createSignalling, autoBan, UUID, REASONS, FORWARD, send, forward, chat, evidence, logDbError };
