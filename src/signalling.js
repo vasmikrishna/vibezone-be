@@ -8,6 +8,7 @@ const Connection = require('./models/matches');
 const Report = require('./models/report');
 const Block = require('./models/block');
 const Ban = require('./models/ban');
+const { filterText } = require('./filter');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUALITIES = ['High', 'Medium', 'Low', 'Unknown'];
@@ -15,6 +16,10 @@ const REASONS = ['nudity', 'harassment', 'underage', 'spam', 'other'];
 const MAX_TAGS = 10;
 const MAX_TAG_LENGTH = 30;
 const RATE_LIMIT = 50; // messages per second per socket
+const MAX_NAME_LENGTH = 30;
+const MAX_CHAT_LENGTH = 500;
+const CHAT_PER_SECOND = 2;
+const CHAT_LOG_LINES = 20; // kept per call in memory, saved only with a report
 const REPORTS_TO_BAN = 3;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -43,6 +48,11 @@ function parseTags(tags) {
   return clean;
 }
 
+function parseName(name) {
+  const clean = typeof name === 'string' ? filterText(name.trim().slice(0, MAX_NAME_LENGTH)).trim() : '';
+  return clean || 'Guest';
+}
+
 const isSdp = (v) => v !== null && typeof v === 'object' && typeof v.type === 'string' && typeof v.sdp === 'string';
 const FORWARD = {
   offer: (data) => isSdp(data.offer) && { offer: data.offer },
@@ -69,8 +79,9 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
       a.callId = crypto.randomUUID();
       b.callId = crypto.randomUUID();
       a.callStart = b.callStart = Date.now();
-      send(a.ws, { type: 'matched', partnerId: b.callId, role: 'caller', sharedTags });
-      send(b.ws, { type: 'matched', partnerId: a.callId, role: 'callee', sharedTags });
+      a.chatLog = b.chatLog = [];
+      send(a.ws, { type: 'matched', partnerId: b.callId, role: 'caller', sharedTags, partnerName: b.name });
+      send(b.ws, { type: 'matched', partnerId: a.callId, role: 'callee', sharedTags, partnerName: a.name });
     }
   }
 
@@ -85,6 +96,7 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
     const partner = client.partner;
     if (!partner) return;
     client.partner = partner.partner = null;
+    client.chatLog = partner.chatLog = null;
     client.lastPartner = partner.deviceId;
     partner.lastPartner = client.deviceId;
     new Connection({ userId: client.callId, partnerId: partner.callId, callDuration: Date.now() - client.callStart })
@@ -168,6 +180,9 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
       ws,
       deviceId,
       tags,
+      name: parseName(data.name),
+      chatTimes: [],
+      chatLog: null,
       blocks: new Set(blocks.map((b) => b.blockedDevice)),
       lastPartner: null,
       partner: null,
@@ -177,6 +192,22 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
     send(ws, { type: 'ready', iceServers: iceServers(env) });
     send(ws, { type: 'activeUsers', value: clients.size });
     enqueue(client);
+  }
+
+  function chat(client, data) {
+    const text = typeof data.text === 'string' ? data.text.trim() : '';
+    if (!text || text.length > MAX_CHAT_LENGTH) return send(client.ws, { type: 'error', message: 'invalid chat' });
+    const t = Date.now();
+    client.chatTimes = client.chatTimes.filter((at) => t - at < 1000);
+    if (client.chatTimes.length >= CHAT_PER_SECOND) return send(client.ws, { type: 'error', message: 'chat rate limit' });
+    client.chatTimes.push(t);
+    if (!client.partner) return send(client.ws, { type: 'error', message: 'not in a call' });
+
+    const clean = filterText(text);
+    client.chatLog.push({ from: client.deviceId, text: clean, at: new Date(t) });
+    if (client.chatLog.length > CHAT_LOG_LINES) client.chatLog.shift();
+    send(client.partner.ws, { type: 'chat', text: clean });
+    send(client.ws, { type: 'chatSent', text: clean });
   }
 
   function handle(ws, data) {
@@ -195,11 +226,18 @@ function createSignalling({ server, allowedOrigins = [], waitMs = 10000, tickMs 
     }
 
     switch (data.type) {
+      case 'chat':
+        return chat(client, data);
       case 'report':
         if (!REASONS.includes(data.reason)) return send(ws, { type: 'error', message: 'invalid reason' });
         if (client.partner) {
           const reportedDevice = client.partner.deviceId;
-          new Report({ reporterDevice: client.deviceId, reportedDevice, reason: data.reason })
+          const evidence = client.chatLog.map((line) => ({
+            sender: line.from === client.deviceId ? 'reporter' : 'reported',
+            text: line.text,
+            at: line.at,
+          }));
+          new Report({ reporterDevice: client.deviceId, reportedDevice, reason: data.reason, evidence })
             .save()
             .then(() => checkAutoBan(reportedDevice), logDbError);
         }

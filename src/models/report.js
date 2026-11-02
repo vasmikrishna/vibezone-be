@@ -4,6 +4,15 @@ const reportSchema = new mongoose.Schema({
   reporterDevice: { type: String, required: true },
   reportedDevice: { type: String, required: true, index: true },
   reason: { type: String, required: true },
+  // Last chat lines of the reported call, kept only because a report was filed.
+  evidence: [
+    {
+      _id: false,
+      sender: { type: String, enum: ['reporter', 'reported'], required: true },
+      text: { type: String, required: true },
+      at: { type: Date, required: true },
+    },
+  ],
   createdAt: { type: Date, default: Date.now, index: true },
 });
 
