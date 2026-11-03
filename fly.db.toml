@@ -1,0 +1,18 @@
+# MongoDB for vibezone-api, reachable only on Fly's private network (vibezone-db.internal).
+# Root user comes from the MONGO_INITDB_ROOT_USERNAME / MONGO_INITDB_ROOT_PASSWORD secrets.
+app = "vibezone-db"
+primary_region = "sin"
+
+[build]
+  image = "mongo:7"
+
+[processes]
+  app = "mongod --bind_ip_all --ipv6 --wiredTigerCacheSizeGB 0.25"
+
+[mounts]
+  source = "vibezone_data"
+  destination = "/data/db"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
