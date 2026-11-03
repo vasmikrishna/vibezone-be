@@ -9,6 +9,7 @@ const Ban = require('./models/ban');
 const { REASONS, FORWARD, send, forward, chat, evidence, autoBan, logDbError } = require('./signalling');
 const { verifyToken, adult, OBJECT_ID } = require('./routes/auth');
 const { iceServers } = require('./ice');
+const { recordStreak, STREAK_CALL_MS } = require('./streak');
 
 const EARLY_MIN = 10; // attendees and host may join this long before startsAt
 
@@ -16,7 +17,7 @@ const EARLY_MIN = 10; // attendees and host may join this long before startsAt
  * Live private rooms: the host talks 1-to-1 with each attendee in join order, one turn at a time.
  * State is in memory, like random matchmaking. minuteMs scales all durations (tests).
  */
-function createRooms({ jwtSecret, minuteMs, env }) {
+function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
   const live = new Map(); // roomId -> room
 
   const entry = (m) => m && { userId: m.userId, name: m.name };
@@ -39,11 +40,13 @@ function createRooms({ jwtSecret, minuteMs, env }) {
     if (!m) return;
     clearTimeout(room.sessionTimer);
     room.current = null;
+    const counts = Date.now() - room.sessionStart >= streakMs;
     for (const c of [m, room.host]) {
       if (!c) continue;
       c.partner = null;
       c.chatLog = null;
       send(c.ws, { type: 'partnerLeft' });
+      if (counts) recordStreak(c.userId, env).then((s) => s && send(c.ws, { type: 'streak', ...s }));
     }
   }
 
@@ -54,6 +57,7 @@ function createRooms({ jwtSecret, minuteMs, env }) {
       const host = room.host;
       const t = Date.now();
       room.current = m;
+      room.sessionStart = t;
       room.sessionEndsAt = Math.min(t + room.interactionMin * minuteMs, room.endsAt);
       host.partner = m;
       m.partner = host;

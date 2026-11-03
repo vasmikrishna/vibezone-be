@@ -17,6 +17,8 @@ if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || !proces
 async function main() {
   try {
     await mongoose.connect(process.env.MONGO_URI);
+    // Replaces the old non-sparse phone index, which blocks a second user without a phone.
+    await require('./src/models/user').syncIndexes();
   } catch (err) {
     console.error('Error connecting to MongoDB:', err.message);
     process.exit(1);

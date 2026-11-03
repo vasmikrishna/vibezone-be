@@ -8,7 +8,10 @@ const Connection = require('./models/matches');
 const Report = require('./models/report');
 const Block = require('./models/block');
 const Ban = require('./models/ban');
+const User = require('./models/user');
 const { filterText } = require('./filter');
+const { verifyToken } = require('./routes/auth');
+const { recordStreak, STREAK_CALL_MS } = require('./streak');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUALITIES = ['High', 'Medium', 'Low', 'Unknown'];
@@ -92,14 +95,18 @@ const evidence = (client) =>
     at: line.at,
   }));
 
-/** Bans a device or user for a day once enough people reported it. Returns the end of the ban, if any. */
-async function autoBan(deviceId) {
+/**
+ * Bans a device or user for a day once enough people reported it, plus the signed-in userId of a reported device.
+ * Returns the end of the ban, if any.
+ */
+async function autoBan(deviceId, userId) {
   try {
     const since = new Date(Date.now() - DAY_MS);
     const reporters = await Report.distinct('reporterDevice', { reportedDevice: deviceId, createdAt: { $gte: since } });
     if (reporters.length < REPORTS_TO_BAN) return null;
     const until = new Date(Date.now() + DAY_MS);
     await Ban.updateOne({ deviceId }, { until, reason: 'auto: reports' }, { upsert: true });
+    if (userId) await Ban.updateOne({ deviceId: userId }, { until, reason: 'auto: reports' }, { upsert: true });
     return until;
   } catch (err) {
     logDbError(err);
@@ -107,7 +114,16 @@ async function autoBan(deviceId) {
   }
 }
 
-function createSignalling({ server, rooms, allowedOrigins = [], waitMs = 10000, tickMs = 1000, env = process.env }) {
+function createSignalling({
+  server,
+  rooms,
+  allowedOrigins = [],
+  waitMs = 10000,
+  tickMs = 1000,
+  env = process.env,
+  jwtSecret,
+  streakMs = STREAK_CALL_MS,
+}) {
   const wss = new WebSocket.Server({
     server,
     maxPayload: 64 * 1024,
@@ -145,9 +161,13 @@ function createSignalling({ server, rooms, allowedOrigins = [], waitMs = 10000, 
     client.chatLog = partner.chatLog = null;
     client.lastPartner = partner.deviceId;
     partner.lastPartner = client.deviceId;
-    new Connection({ userId: client.callId, partnerId: partner.callId, callDuration: Date.now() - client.callStart })
-      .save()
-      .catch(logDbError);
+    const callDuration = Date.now() - client.callStart;
+    new Connection({ userId: client.callId, partnerId: partner.callId, callDuration }).save().catch(logDbError);
+    if (callDuration >= streakMs) {
+      for (const c of [client, partner]) {
+        if (c.userId) recordStreak(c.userId, env).then((s) => s && send(c.ws, { type: 'streak', ...s }));
+      }
+    }
     send(partner.ws, { type: 'partnerLeft' });
     enqueue(partner);
   }
@@ -160,17 +180,21 @@ function createSignalling({ server, rooms, allowedOrigins = [], waitMs = 10000, 
     clients.delete(client.deviceId);
   }
 
-  function kick(deviceId, until) {
-    const client = clients.get(deviceId);
-    if (!client) return;
-    detach(client);
-    send(client.ws, { type: 'banned', until: until.toISOString() });
-    client.ws.close();
+  /** Kicks every client with this device id or signed-in user id. */
+  function kick(id, until) {
+    for (const client of [...clients.values()]) {
+      if (client.deviceId !== id && client.userId !== id) continue;
+      detach(client);
+      send(client.ws, { type: 'banned', until: until.toISOString() });
+      client.ws.close();
+    }
   }
 
-  async function checkAutoBan(deviceId) {
-    const until = await autoBan(deviceId);
-    if (until) kick(deviceId, until);
+  async function checkAutoBan(deviceId, userId) {
+    const until = await autoBan(deviceId, userId);
+    if (!until) return;
+    kick(deviceId, until);
+    if (userId) kick(userId, until);
   }
 
   function block(client) {
@@ -190,17 +214,23 @@ function createSignalling({ server, rooms, allowedOrigins = [], waitMs = 10000, 
       return ws.close(1008);
     }
     const deviceId = data.deviceId.toLowerCase();
+    // Random chat stays login-free: a missing or invalid token is ignored.
+    let userId = data.token === undefined ? null : verifyToken(data.token, jwtSecret);
     ws.joining = true;
 
     let ban = null;
     let blocks = [];
     try {
-      [ban, blocks] = await Promise.all([
-        Ban.findOne({ deviceId, until: { $gt: new Date() } }).lean(),
+      let user;
+      [ban, blocks, user] = await Promise.all([
+        Ban.findOne({ deviceId: { $in: userId ? [deviceId, userId] : [deviceId] }, until: { $gt: new Date() } }).lean(),
         Block.find({ deviceId }).lean(),
+        userId && User.exists({ _id: userId }),
       ]);
+      if (!user) userId = null;
     } catch (err) {
       logDbError(err);
+      userId = null;
     }
     if (ws.readyState !== WebSocket.OPEN) return;
     if (ban) {
@@ -217,6 +247,7 @@ function createSignalling({ server, rooms, allowedOrigins = [], waitMs = 10000, 
     const client = {
       ws,
       deviceId,
+      userId,
       tags,
       name: parseName(data.name),
       chatTimes: [],
@@ -252,10 +283,10 @@ function createSignalling({ server, rooms, allowedOrigins = [], waitMs = 10000, 
       case 'report':
         if (!REASONS.includes(data.reason)) return send(ws, { type: 'error', message: 'invalid reason' });
         if (client.partner) {
-          const reportedDevice = client.partner.deviceId;
+          const { deviceId: reportedDevice, userId: reportedUser } = client.partner;
           new Report({ reporterDevice: client.deviceId, reportedDevice, reason: data.reason, evidence: evidence(client) })
             .save()
-            .then(() => checkAutoBan(reportedDevice), logDbError);
+            .then(() => checkAutoBan(reportedDevice, reportedUser), logDbError);
         }
       // falls through: a report also blocks
       case 'block':

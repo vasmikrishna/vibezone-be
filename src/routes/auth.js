@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { OAuth2Client } = require('google-auth-library');
 
 const User = require('../models/user');
 const Otp = require('../models/otp');
@@ -9,6 +10,7 @@ const Ticket = require('../models/ticket');
 const Block = require('../models/block');
 const { filterText } = require('../filter');
 const { sendCode } = require('../sms');
+const { streakView } = require('../streak');
 
 const PHONE = /^\+[1-9]\d{7,14}$/; // E.164
 const CODE = /^\d{6}$/;
@@ -18,9 +20,23 @@ const OTP_MS = 5 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const MAX_NAME_LENGTH = 30;
+const MAX_CREDENTIAL_LENGTH = 4096;
 
 const adult = (user) => Boolean(user.dob) && !user.underage;
-const userView = (user) => ({ id: String(user._id), name: user.name || '', phone: user.phone, adult: adult(user) });
+const userView = (user, env) => ({
+  id: String(user._id),
+  name: user.name || '',
+  ...(user.phone && { phone: user.phone }),
+  ...(user.email && { email: user.email }),
+  adult: adult(user),
+  streak: streakView(user, env),
+});
+
+/** Default Google ID token check: resolves the token payload, rejects a bad token. */
+function googleVerifier() {
+  const client = new OAuth2Client();
+  return async (idToken, audience) => (await client.verifyIdToken({ idToken, audience })).getPayload();
+}
 
 /** Returns the user id of a valid HS256 token, else null. */
 function verifyToken(token, secret) {
@@ -71,12 +87,17 @@ function parseDob(value) {
 
 const isAdult = (dob) => Date.UTC(dob.getUTCFullYear() + 18, dob.getUTCMonth(), dob.getUTCDate()) <= Date.now();
 
-function authRoutes({ env, jwtSecret, otpSecret, rooms }) {
+function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVerifier() }) {
   const router = express.Router();
   const auth = authenticate(jwtSecret);
   const perPhone = hourlyLimit(3);
   const perIp = hourlyLimit(10);
+  const googlePerIp = hourlyLimit(30);
   const hash = (phone, code) => crypto.createHmac('sha256', otpSecret).update(`${phone}:${code}`).digest();
+  const login = (user) => ({
+    token: jwt.sign({ sub: String(user._id) }, jwtSecret, { algorithm: 'HS256', expiresIn: '30d' }),
+    user: userView(user, env),
+  });
 
   router.post('/auth/otp', async (req, res) => {
     const { phone } = req.body || {};
@@ -118,14 +139,47 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms }) {
         return res.status(401).json({ error: 'invalid code' });
       }
       const user = await User.findOneAndUpdate({ phone }, { $setOnInsert: { phone } }, { upsert: true, new: true });
-      const token = jwt.sign({ sub: String(user._id) }, jwtSecret, { algorithm: 'HS256', expiresIn: '30d' });
-      res.json({ token, user: userView(user) });
+      res.json(login(user));
     } catch {
       res.status(500).json({ error: 'database error' });
     }
   });
 
-  router.get('/me', auth, (req, res) => res.json(userView(req.user)));
+  router.post('/auth/google', async (req, res) => {
+    if (!env.GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'google sign-in unavailable' });
+    const { credential } = req.body || {};
+    if (typeof credential !== 'string' || !credential || credential.length > MAX_CREDENTIAL_LENGTH) {
+      return res.status(400).json({ error: 'credential is required' });
+    }
+    if (!googlePerIp(req.ip)) return res.status(429).json({ error: 'too many attempts, try later' });
+
+    let payload = null;
+    try {
+      payload = await verifyGoogle(credential, env.GOOGLE_CLIENT_ID);
+    } catch {
+      // invalid, expired or for another client id
+    }
+    if (!payload || typeof payload.sub !== 'string' || !payload.sub || payload.email_verified !== true) {
+      return res.status(401).json({ error: 'invalid google token' });
+    }
+    const { sub: googleId, email } = payload;
+    try {
+      let user = await User.findOneAndUpdate(
+        { googleId },
+        { $setOnInsert: { googleId, ...(typeof email === 'string' && { email }) } },
+        { upsert: true, new: true }
+      );
+      const name = typeof payload.given_name === 'string' ? filterText(payload.given_name.trim().slice(0, MAX_NAME_LENGTH)).trim() : '';
+      if (!user.name && name) {
+        user = (await User.findOneAndUpdate({ _id: user._id, name: { $in: [null, ''] } }, { $set: { name } }, { new: true })) || user;
+      }
+      res.json(login(user));
+    } catch {
+      res.status(500).json({ error: 'database error' });
+    }
+  });
+
+  router.get('/me', auth, (req, res) => res.json(userView(req.user, env)));
 
   router.patch('/me', auth, async (req, res) => {
     const { name, dob } = req.body || {};
@@ -156,14 +210,14 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms }) {
       const filter = update.dob ? { _id: user._id, dob: { $in: [null, update.dob] } } : { _id: user._id };
       const saved = await User.findOneAndUpdate(filter, { $set: update }, { new: true });
       if (!saved) return res.status(409).json({ error: 'dob cannot be changed' });
-      res.json(userView(saved));
+      res.json(userView(saved, env));
     } catch {
       res.status(500).json({ error: 'database error' });
     }
   });
 
   router.delete('/me', auth, async (req, res) => {
-    const { _id: id, phone, underage } = req.user;
+    const { _id: id, phone, googleId, underage } = req.user;
     try {
       const booked = await Ticket.distinct('room', { user: id });
       await Room.updateMany({ _id: { $in: booked } }, { $inc: { sold: -1 } });
@@ -171,8 +225,8 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms }) {
       await Room.updateMany({ host: id, status: 'scheduled' }, { $set: { status: 'cancelled' } });
       await Room.updateMany({ host: id }, { $set: { hostName: '' } });
       await Block.deleteMany({ deviceId: String(id) });
-      // An underage phone keeps only the flag, so a new account cannot unlock rooms.
-      if (underage) await User.replaceOne({ _id: id }, { phone, underage: true });
+      // An underage phone or Google account keeps only the flag, so a new account cannot unlock rooms.
+      if (underage) await User.replaceOne({ _id: id }, { ...(phone && { phone }), ...(googleId && { googleId }), underage: true });
       else await User.deleteOne({ _id: id });
     } catch {
       return res.status(500).json({ error: 'database error' });
