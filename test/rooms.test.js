@@ -176,7 +176,7 @@ test('OTP login: code is stored hashed, verifies once and returns a 30 day token
   const res = await verify(phone, code);
   assert.strictEqual(res.status, 200);
   const { token, user } = await res.json();
-  assert.deepStrictEqual(user, { id: user.id, name: '', phone, adult: false, streak: { count: 0, best: 0 } });
+  assert.deepStrictEqual(user, { id: user.id, name: '', phone, adult: false, streak: { count: 0, best: 0 }, calls: 0, badges: user.badges });
   const { exp, iat } = jwt.decode(token);
   assert.strictEqual(exp - iat, 30 * 24 * 3600);
   assert.strictEqual((await verify(phone, code)).status, 401, 'a code works once');
@@ -270,7 +270,8 @@ test('profile: adult dob is fixed once set; under 18 is rejected and blocks room
   assert.strictEqual((await api('PATCH', '/api/me', { token, body: { name: '' } })).status, 400);
 
   const res = await api('PATCH', '/api/me', { token, body: { name: '  Ravi ', dob: '1995-06-15' } });
-  assert.deepStrictEqual(await res.json(), { id: String(user._id), name: 'Ravi', phone: user.phone, adult: true, streak: { count: 0, best: 0 } });
+  const me = await res.json();
+  assert.deepStrictEqual(me, { id: String(user._id), name: 'Ravi', phone: user.phone, adult: true, streak: { count: 0, best: 0 }, calls: 0, badges: me.badges });
   assert.strictEqual((await api('PATCH', '/api/me', { token, body: { name: 'Ravi', dob: '1995-06-15' } })).status, 200);
   assert.strictEqual((await api('PATCH', '/api/me', { token, body: { dob: '1990-06-15' } })).status, 409);
 

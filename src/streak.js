@@ -17,10 +17,11 @@ function streakView(user, env, now = new Date()) {
   return { count: alive ? s.count || 0 : 0, best: s.best || 0 };
 }
 
-/** Counts today for the user; returns { count, best }, or null if the user is gone or the database failed. */
+/** Counts the call and today for the user; returns { count, best }, or null if the user is gone or the database failed. */
 async function recordStreak(userId, env, now = new Date()) {
   const today = dayKey(now, env);
   try {
+    await User.updateOne({ _id: userId }, { $inc: { calls: 1 } });
     for (let attempt = 0; attempt < 3; attempt++) {
       const user = await User.findById(userId, 'streak').lean();
       if (!user) return null;

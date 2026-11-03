@@ -10,6 +10,7 @@ const userSchema = new mongoose.Schema({
   // Set when a date of birth under 18 was given; the phone or Google account can never use rooms.
   underage: { type: Boolean },
   streak: { count: Number, best: Number, lastDay: String }, // lastDay: YYYY-MM-DD in STREAK_TZ
+  calls: Number, // calls of at least the streak time; unset until the first one
   createdAt: { type: Date, default: Date.now },
 });
 

@@ -11,6 +11,7 @@ const Block = require('../models/block');
 const { filterText } = require('../filter');
 const { sendCode } = require('../sms');
 const { streakView } = require('../streak');
+const { badgesView } = require('../badges');
 
 const PHONE = /^\+[1-9]\d{7,14}$/; // E.164
 const CODE = /^\d{6}$/;
@@ -23,14 +24,19 @@ const MAX_NAME_LENGTH = 30;
 const MAX_CREDENTIAL_LENGTH = 4096;
 
 const adult = (user) => Boolean(user.dob) && !user.underage;
-const userView = (user, env) => ({
-  id: String(user._id),
-  name: user.name || '',
-  ...(user.phone && { phone: user.phone }),
-  ...(user.email && { email: user.email }),
-  adult: adult(user),
-  streak: streakView(user, env),
-});
+const userView = (user, env) => {
+  const streak = streakView(user, env);
+  return {
+    id: String(user._id),
+    name: user.name || '',
+    ...(user.phone && { phone: user.phone }),
+    ...(user.email && { email: user.email }),
+    adult: adult(user),
+    streak,
+    calls: user.calls || 0,
+    badges: badgesView(user, streak),
+  };
+};
 
 /** Default Google ID token check: resolves the token payload, rejects a bad token. */
 function googleVerifier() {
