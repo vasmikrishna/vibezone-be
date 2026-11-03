@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (badges, #9)
+
+- Badges (`src/badges.js`) are computed on each read from `calls` (calls of at least a minute, counted in `recordStreak`) and the streak; the user view now has `calls` and `badges` (6 badges, each `earned` true/false).
+
 ## Unreleased (Google sign-in and streaks, #7)
 
 - `POST /api/auth/google` verifies a Google ID token (`GOOGLE_CLIENT_ID`; 503 when unset) and finds or creates the user by Google id. Users have a phone, a Google account, or both.

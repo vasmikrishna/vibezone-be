@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-11-04: Badges are computed from calls and streak, not stored
+
+Every badge depends only on `User.calls` and the streak, so `badgesView` derives them on each read and no collection is needed. Trade-off: no earned date, and Hot Streak disappears when the streak ends. Store badges only if one ever needs an earned date.
+
 ## 2026-11-02: Long-running host, not Vercel
 
 Vercel functions are short-lived and cannot hold WebSocket connections, and matchmaking keeps the queue and active calls in process memory. The server therefore runs as one long-lived Node process (Docker image) on a VM or container host. Scaling past one instance would need a shared queue (e.g. Redis); not needed yet.

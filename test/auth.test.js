@@ -8,6 +8,7 @@ const WebSocket = require('ws');
 const { createServer } = require('../src/server');
 const User = require('../src/models/user');
 const Ban = require('../src/models/ban');
+const { badgesView } = require('../src/badges');
 const { recordStreak, streakView, dayKey } = require('../src/streak');
 
 const JWT_SECRET = 'test-jwt-secret';
@@ -107,6 +108,9 @@ test('google login creates the user once, names it from given_name and returns a
   assert.strictEqual(user.phone, undefined);
   assert.strictEqual(user.adult, false);
   assert.deepStrictEqual(user.streak, { count: 0, best: 0 });
+  assert.strictEqual(user.calls, 0);
+  assert.strictEqual(user.badges.length, 6);
+  assert.ok(user.badges.every((b) => b.earned === false));
 
   const second = await (await google(credential)).json();
   assert.strictEqual(second.user.id, user.id);
@@ -138,6 +142,24 @@ test('recordStreak: same day unchanged, next day +1, a gap resets; streakView dr
   assert.deepStrictEqual(streakView(user, env, new Date('2026-03-04T10:00:00Z')), { count: 3, best: 3 });
   assert.deepStrictEqual(streakView(user, env, new Date('2026-03-05T10:00:00Z')), { count: 0, best: 3 });
   assert.deepStrictEqual(await recordStreak(id, env, new Date('2026-03-06T10:00:00Z')), { count: 1, best: 3 });
+});
+
+test('badgesView: fresh user earns none, calls and streak unlock badges, a broken streak drops hot-streak only', () => {
+  const earned = (u, s) => badgesView(u, s).filter((b) => b.earned).map((b) => b.id);
+  assert.deepStrictEqual(earned({}, { count: 0, best: 0 }), []);
+  assert.deepStrictEqual(earned({ calls: 10 }, { count: 5, best: 7 }), ['first-call', 'regular', 'hot-streak', 'week-warrior']);
+  assert.deepStrictEqual(earned({ calls: 10 }, { count: 0, best: 7 }), ['first-call', 'regular', 'week-warrior']);
+});
+
+test('recordStreak: a second call on the same day keeps the streak but counts the call', async () => {
+  const env = { STREAK_TZ: 'Asia/Kolkata' };
+  const { _id: id } = await User.create({ googleId: 'g-calls' });
+  const now = new Date('2026-03-01T06:00:00Z');
+  await recordStreak(id, env, now);
+  await recordStreak(id, env, now);
+  const user = await User.findById(id).lean();
+  assert.strictEqual(user.streak.count, 1);
+  assert.strictEqual(user.calls, 2);
 });
 
 test('random chat: two signed-in users who talk past the streak time both get a streak; guests do not', async () => {
