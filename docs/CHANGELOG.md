@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (Google sign-in and streaks, #7)
+
+- `POST /api/auth/google` verifies a Google ID token (`GOOGLE_CLIENT_ID`; 503 when unset) and finds or creates the user by Google id. Users have a phone, a Google account, or both.
+- Daily streaks (`src/streak.js`): a call of at least a minute in random chat or a room counts for the day in `STREAK_TZ` (default Asia/Kolkata); `streak` is in the user view and pushed live as a `streak` message.
+- Random chat accepts an optional login token; bans by user id now apply there, and auto-bans also ban the signed-in user.
+- Hosted on Fly.io (`fly.toml` for the API, `fly.db.toml` for MongoDB on a private volume). The server rebuilds user indexes on start.
+
 ## Unreleased (private rooms, #6)
 
 - Accounts: phone OTP login (`/api/auth/otp`, `/api/auth/verify`) with 30-day HS256 JWTs; codes are 6 digits from `crypto.randomInt`, stored only as an HMAC with `OTP_SECRET`, expire after 5 minutes (TTL index) and lock after 5 attempts; 3 sends per phone and 10 per IP an hour.
