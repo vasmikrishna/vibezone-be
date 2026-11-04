@@ -5,6 +5,7 @@ const Report = require('../models/report');
 const Ban = require('../models/ban');
 const User = require('../models/user');
 const Room = require('../models/room');
+const Friendship = require('../models/friendship');
 const Connection = require('../models/matches');
 const { UUID } = require('../signalling');
 const { verifyToken, isAdmin, adult, OBJECT_ID } = require('./auth');
@@ -232,12 +233,13 @@ function adminRoutes({ env, jwtSecret, onBan, signalling, rooms }) {
       const user = await User.findById(id).lean();
       if (!user) return res.status(404).json({ error: 'user not found' });
       const key = String(user._id);
-      const [[row], recentReports, hosted] = await Promise.all([
+      const [[row], recentReports, hosted, friends] = await Promise.all([
         userRows([user]),
         Report.find({ reportedDevice: key }).sort({ createdAt: -1 }).limit(10).lean(),
         Room.countDocuments({ host: user._id }),
+        Friendship.countDocuments({ users: user._id, status: 'accepted' }),
       ]);
-      res.json({ ...row, recentReports, rooms: hosted });
+      res.json({ ...row, recentReports, rooms: hosted, friends });
     } catch {
       res.status(500).json({ error: 'database error' });
     }

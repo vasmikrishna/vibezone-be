@@ -425,6 +425,10 @@ test('queue in join order; roomNext runs 1-to-1 turns with forwarding and chat',
   assert.deepStrictEqual([mh.role, mh.partnerId, mh.partnerName, mh.sharedTags], ['caller', a.id, 'Anu', []]);
   assert.deepStrictEqual([ma.role, ma.partnerId, ma.partnerName], ['callee', host.id, 'Host']);
   assert.ok(new Date(ma.endsAt) > new Date());
+  assert.deepStrictEqual([mh.canAddFriend, mh.friendStatus, ma.friendStatus], [true, 'none', 'none']);
+  wa.json({ type: 'friendRequest' });
+  assert.strictEqual((await wa.waitFor('friendStatus')).status, 'requested');
+  assert.strictEqual((await h.waitFor('friendRequestReceived')).name, 'Anu');
   const stateA = await wa.state();
   assert.deepStrictEqual([stateA.position, stateA.current, stateA.endsAt], [null, { userId: a.id, name: 'Anu' }, ma.endsAt]);
   assert.strictEqual((await wb.state()).position, 1);

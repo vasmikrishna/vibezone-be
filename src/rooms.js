@@ -6,7 +6,7 @@ const Ticket = require('./models/ticket');
 const Block = require('./models/block');
 const Report = require('./models/report');
 const Ban = require('./models/ban');
-const { REASONS, FORWARD, send, forward, chat, evidence, autoBan, logDbError } = require('./signalling');
+const { REASONS, FORWARD, send, forward, chat, evidence, autoBan, logDbError, friends } = require('./signalling');
 const { verifyToken, adult, OBJECT_ID } = require('./routes/auth');
 const { iceServers } = require('./ice');
 const { recordStreak, STREAK_CALL_MS } = require('./streak');
@@ -67,8 +67,13 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
         broadcast(room);
       }, room.sessionEndsAt - t).unref();
       const endsAt = new Date(room.sessionEndsAt).toISOString();
-      send(host.ws, { type: 'matched', role: 'caller', partnerId: m.userId, partnerName: m.name, sharedTags: [], endsAt });
-      send(m.ws, { type: 'matched', role: 'callee', partnerId: host.userId, partnerName: host.name, sharedTags: [], endsAt });
+      // matched waits for the friend status (one indexed query); skipped if the session ended meanwhile.
+      return friends.matchFields(host, m).then((fields) => {
+        if (room.current !== m || host.partner !== m) return;
+        send(host.ws, { type: 'matched', role: 'caller', partnerId: m.userId, partnerName: m.name, sharedTags: [], endsAt, ...fields.a });
+        send(m.ws, { type: 'matched', role: 'callee', partnerId: host.userId, partnerName: host.name, sharedTags: [], endsAt, ...fields.b });
+        broadcast(room);
+      });
     }
     broadcast(room);
   }
@@ -181,6 +186,7 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
       { $set: { blockedDevice: partner.userId } },
       { upsert: true }
     ).catch(logDbError);
+    friends.unfriend(m.userId, partner.userId);
     const attendee = m === room.host ? partner : m;
     leave(attendee);
     send(attendee.ws, { type: 'roomClosed' });
@@ -198,6 +204,8 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
     switch (data.type) {
       case 'chat':
         return chat(m, data);
+      case 'friendRequest':
+        return friends.request(m);
       case 'roomNext':
         if (m !== room.host) return send(ws, { type: 'error', message: 'host only' });
         if (Date.now() < room.startsAt) return send(ws, { type: 'error', message: 'room not started' });

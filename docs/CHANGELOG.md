@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (friends, #12)
+
+- Friend requests during a call: random chat and rooms accept `{ type: 'friendRequest' }` between two signed-in users (20 per user per hour, refused if either blocked the other); a mutual request auto-accepts. `matched` now carries `canAddFriend` and `friendStatus` (`none`/`requested`/`incoming`/`friends`).
+- `/api/friends`: `GET /` (friends, incoming, outgoing), `GET /count`, `POST /requests/:id/accept|decline`, `DELETE /requests/:id` (cancel) and `DELETE /:userId` (remove).
+- Blocking or reporting a signed-in partner and `DELETE /api/me` remove the friendships and requests involved; admin `GET /users/:id` adds `friends` (accepted count).
+
 ## Unreleased (admin dashboard API, #11)
 
 - Admin accounts: users whose email is in `ADMIN_EMAILS` (comma-separated, case-insensitive) are admins; `/me` shows `admin: true`. `/api/admin/*` is always mounted and accepts `x-admin-token` (when `ADMIN_TOKEN` is set) or an admin's bearer token; 401 without credentials, 403 for non-admins.
