@@ -238,15 +238,17 @@ function createSignalling({
     ws.joining = true;
 
     let ban = null;
+    let accountName = ''; // used when a signed-in user leaves the name empty
     let blocks = [];
     try {
       let user;
       [ban, blocks, user] = await Promise.all([
         Ban.findOne({ deviceId: { $in: userId ? [deviceId, userId] : [deviceId] }, until: { $gt: new Date() } }).lean(),
         Block.find({ deviceId }).lean(),
-        userId && User.exists({ _id: userId }),
+        userId && User.findById(userId, 'name').lean(),
       ]);
       if (!user) userId = null;
+      else accountName = user.name;
     } catch (err) {
       logDbError(err);
       userId = null;
@@ -268,7 +270,7 @@ function createSignalling({
       deviceId,
       userId,
       tags,
-      name: parseName(data.name),
+      name: parseName(typeof data.name === 'string' && data.name.trim() ? data.name : accountName),
       chatTimes: [],
       chatLog: null,
       blocks: new Set(blocks.map((b) => b.blockedDevice)),
