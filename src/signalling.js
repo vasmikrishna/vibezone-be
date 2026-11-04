@@ -65,6 +65,8 @@ const FORWARD = {
   answer: (data) => isSdp(data.answer) && { answer: data.answer },
   candidate: (data) => (data.candidate === null || typeof data.candidate === 'object') && { candidate: data.candidate },
   networkQualityUpdate: (data) => QUALITIES.includes(data.quality) && { quality: data.quality },
+  mediaState: ({ video, audio, hold }) =>
+    [video, audio, hold].every((v) => typeof v === 'boolean') && { video, audio, hold },
 };
 
 /** Shared by random chat and rooms: a client has ws, deviceId, partner, chatTimes and chatLog. */
