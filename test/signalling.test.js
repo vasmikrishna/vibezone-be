@@ -124,6 +124,17 @@ test('forwards only to the partner, ignoring a spoofed to', async () => {
   closeAll(a, b, c);
 });
 
+test('mediaState forwards only video, audio and hold to the partner', async () => {
+  const [a, b] = await pair();
+  a.json({ type: 'mediaState', video: false, audio: true, hold: false, extra: 'x' });
+  assert.deepStrictEqual(await b.waitFor('mediaState'), { type: 'mediaState', video: false, audio: true, hold: false });
+  a.json({ type: 'mediaState', video: 'no', audio: true, hold: false });
+  assert.strictEqual((await a.waitFor('error')).message, 'invalid mediaState');
+  a.json({ type: 'mediaState', video: true, audio: true });
+  assert.strictEqual((await a.waitFor('error')).message, 'invalid mediaState');
+  closeAll(a, b);
+});
+
 test('skip tells the partner and rematches them after the wait', async () => {
   const [a, b] = await pair();
   const start = Date.now();
