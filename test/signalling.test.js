@@ -135,6 +135,17 @@ test('mediaState forwards only video, audio and hold to the partner', async () =
   closeAll(a, b);
 });
 
+test('recording consent messages forward to the partner with no other fields', async () => {
+  const [a, b] = await pair();
+  for (const type of ['recordRequest', 'recordAccept', 'recordDecline', 'recordStop']) {
+    a.json({ type, extra: 'x', data: { big: true } });
+    assert.deepStrictEqual(await b.waitFor(type), { type });
+    b.json({ type, extra: 'y' });
+    assert.deepStrictEqual(await a.waitFor(type), { type });
+  }
+  closeAll(a, b);
+});
+
 test('skip tells the partner and rematches them after the wait', async () => {
   const [a, b] = await pair();
   const start = Date.now();
