@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (recording consent, #16)
+
+- New forwarded messages `recordRequest`, `recordAccept`, `recordDecline` and `recordStop` in random chat and rooms. They carry only `{ type }` (any other fields are dropped). The server only relays consent; recordings are made and saved on the recording user's device and never reach the server.
+
 ## Unreleased (camera off and on hold, #14)
 
 - New forwarded message `mediaState { video, audio, hold }` (all booleans, otherwise `invalid mediaState`) in random chat and rooms, so the partner can show camera off, muted and on hold.

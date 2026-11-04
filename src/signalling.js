@@ -67,6 +67,11 @@ const FORWARD = {
   networkQualityUpdate: (data) => QUALITIES.includes(data.quality) && { quality: data.quality },
   mediaState: ({ video, audio, hold }) =>
     [video, audio, hold].every((v) => typeof v === 'boolean') && { video, audio, hold },
+  // Recording consent: the recording itself never reaches the server, so these carry no fields.
+  recordRequest: () => ({}),
+  recordAccept: () => ({}),
+  recordDecline: () => ({}),
+  recordStop: () => ({}),
 };
 
 /** Shared by random chat and rooms: a client has ws, deviceId, partner, chatTimes and chatLog. */
