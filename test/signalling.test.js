@@ -269,7 +269,7 @@ test('health and admin endpoints', async () => {
   assert.strictEqual((await fetch(`${base}/api/admin/reports`)).status, 401);
   const headers = { 'x-admin-token': ADMIN_TOKEN, 'content-type': 'application/json' };
   const reports = await fetch(`${base}/api/admin/reports`, { headers });
-  assert.ok(Array.isArray(await reports.json()));
+  assert.ok(Array.isArray((await reports.json()).items));
 
   const deviceId = crypto.randomUUID();
   const ban = await fetch(`${base}/api/admin/bans`, { method: 'POST', headers, body: JSON.stringify({ deviceId, hours: 1 }) });
@@ -283,11 +283,12 @@ test('health and admin endpoints', async () => {
   closeAll(await joined(deviceId));
 });
 
-test('admin API is 404 without ADMIN_TOKEN', async () => {
+test('admin API is 401 without ADMIN_TOKEN and without a bearer token', async () => {
   const { server: plain, wss: plainWss } = createServer({ env: {} });
   await new Promise((resolve) => plain.listen(0, '127.0.0.1', resolve));
-  const res = await fetch(`http://127.0.0.1:${plain.address().port}/api/admin/reports`);
-  assert.strictEqual(res.status, 404);
+  const at = `http://127.0.0.1:${plain.address().port}/api/admin/reports`;
+  assert.strictEqual((await fetch(at)).status, 401);
+  assert.strictEqual((await fetch(at, { headers: { 'x-admin-token': '' } })).status, 401);
   plainWss.close();
   await new Promise((resolve) => plain.close(resolve));
 });

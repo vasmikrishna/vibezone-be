@@ -24,6 +24,10 @@ const MAX_NAME_LENGTH = 30;
 const MAX_CREDENTIAL_LENGTH = 4096;
 
 const adult = (user) => Boolean(user.dob) && !user.underage;
+// ponytail: admins are derived from ADMIN_EMAILS on each check, no stored role.
+const isAdmin = (user, env) =>
+  Boolean(user.email) &&
+  (env.ADMIN_EMAILS || '').split(',').some((e) => e.trim() && e.trim().toLowerCase() === user.email.toLowerCase());
 const userView = (user, env) => {
   const streak = streakView(user, env);
   return {
@@ -35,6 +39,7 @@ const userView = (user, env) => {
     streak,
     calls: user.calls || 0,
     badges: badgesView(user, streak),
+    ...(isAdmin(user, env) && { admin: true }),
   };
 };
 
@@ -244,4 +249,4 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
   return router;
 }
 
-module.exports = { authRoutes, authenticate, verifyToken, adult, OBJECT_ID };
+module.exports = { authRoutes, authenticate, verifyToken, adult, isAdmin, OBJECT_ID };

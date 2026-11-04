@@ -42,4 +42,4 @@ async function recordStreak(userId, env, now = new Date()) {
   return null;
 }
 
-module.exports = { recordStreak, streakView, dayKey, STREAK_CALL_MS };
+module.exports = { recordStreak, streakView, dayKey, previousDay, STREAK_CALL_MS };

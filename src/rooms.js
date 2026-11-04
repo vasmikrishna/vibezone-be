@@ -228,6 +228,12 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
   const api = {
     handle,
     leave,
+    isLive: (roomId) => live.has(roomId),
+    stats() {
+      let inRooms = 0;
+      for (const room of live.values()) inRooms += room.members.size + (room.host ? 1 : 0);
+      return { roomsLive: live.size, inRooms };
+    },
     close(roomId) {
       const room = live.get(roomId);
       if (room) closeRoom(room);

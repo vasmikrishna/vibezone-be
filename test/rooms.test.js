@@ -573,7 +573,7 @@ test('reports: in-session report saves chat evidence; HTTP report validates inpu
   assert.strictEqual((await api('POST', '/api/rooms/xyz/report', { token: a.token, body: { reason: 'spam' } })).status, 400);
   assert.strictEqual((await api('POST', route, { token: host.token, body: { reason: 'spam', userId: a.id } })).status, 201);
 
-  const reports = await (await fetch(`${base}/api/admin/reports`, { headers: { 'x-admin-token': ADMIN_TOKEN } })).json();
+  const { items: reports } = await (await fetch(`${base}/api/admin/reports`, { headers: { 'x-admin-token': ADMIN_TOKEN } })).json();
   assert.ok(reports.some((x) => x.reporterDevice === host.id && x.reportedDevice === a.id && x.roomId === String(r._id)));
 });
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (admin dashboard API, #11)
+
+- Admin accounts: users whose email is in `ADMIN_EMAILS` (comma-separated, case-insensitive) are admins; `/me` shows `admin: true`. `/api/admin/*` is always mounted and accepts `x-admin-token` (when `ADMIN_TOKEN` is set) or an admin's bearer token; 401 without credentials, 403 for non-admins.
+- `GET /api/admin/stats`: users, live online counts, calls, reports, bans, rooms and a 14-day daily series in `STREAK_TZ`.
+- Reports have `status` (open/resolved/dismissed), `resolvedAt`, `resolvedBy`; `GET /reports` is now paged (`{ items, total, page }`, `?status=`) and `PATCH /reports/:id` sets the status.
+- New `GET /users` (search by `q`), `GET /users/:id`, `GET /bans`, `GET /rooms` and `POST /rooms/:id/cancel`; `DELETE /bans/:deviceId` validates the id.
+
 ## Unreleased (badges, #9)
 
 - Badges (`src/badges.js`) are computed on each read from `calls` (calls of at least a minute, counted in `recordStreak`) and the streak; the user view now has `calls` and `badges` (6 badges, each `earned` true/false).

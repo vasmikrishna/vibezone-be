@@ -362,7 +362,9 @@ function createSignalling({
     clearInterval(keepalive);
   });
 
-  return { wss, kick };
+  const stats = () => ({ randomChat: clients.size, inCall: [...clients.values()].filter((c) => c.partner).length });
+
+  return { wss, kick, stats };
 }
 
 module.exports = { createSignalling, autoBan, UUID, REASONS, FORWARD, send, forward, chat, evidence, logDbError };
