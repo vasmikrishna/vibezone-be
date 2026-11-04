@@ -9,6 +9,7 @@ const { createRooms } = require('./rooms');
 const adminRoutes = require('./routes/admin');
 const { authRoutes } = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
+const friendRoutes = require('./routes/friends');
 
 const MONGO_STATES = ['disconnected', 'connected', 'connecting', 'disconnecting'];
 
@@ -36,10 +37,12 @@ function createServer({ env = process.env, waitMs, tickMs, minuteMs = 60 * 1000,
   });
   app.use('/api', authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle }));
   app.use('/api/rooms', roomRoutes({ jwtSecret, rooms, minuteMs }));
-  if (env.ADMIN_TOKEN) app.use('/api/admin', adminRoutes(env.ADMIN_TOKEN, (id, until) => {
-      signalling.kick(id, until);
-      rooms.kickUser(id);
-    }));
+  app.use('/api/friends', friendRoutes({ env, jwtSecret }));
+  const onBan = (id, until) => {
+    signalling.kick(id, until);
+    rooms.kickUser(id);
+  };
+  app.use('/api/admin', adminRoutes({ env, jwtSecret, onBan, signalling, rooms }));
 
   return { app, server, wss: signalling.wss };
 }

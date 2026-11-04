@@ -12,6 +12,7 @@ const User = require('./models/user');
 const { filterText } = require('./filter');
 const { verifyToken } = require('./routes/auth');
 const { recordStreak, STREAK_CALL_MS } = require('./streak');
+const { createFriends } = require('./friends');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUALITIES = ['High', 'Medium', 'Low', 'Unknown'];
@@ -55,6 +56,8 @@ function parseName(name) {
   const clean = typeof name === 'string' ? filterText(name.trim().slice(0, MAX_NAME_LENGTH)).trim() : '';
   return clean || 'Guest';
 }
+
+const friends = createFriends({ send, logDbError });
 
 const isSdp = (v) => v !== null && typeof v === 'object' && typeof v.type === 'string' && typeof v.sdp === 'string';
 const FORWARD = {
@@ -133,22 +136,37 @@ function createSignalling({
   const matcher = createMatcher({ waitMs });
   const clients = new Map(); // deviceId -> client
 
-  function tryMatch() {
-    for (let pair = matcher.next(); pair; pair = matcher.next()) {
-      const { a, b, sharedTags } = pair;
-      a.partner = b;
-      b.partner = a;
-      a.callId = crypto.randomUUID();
-      b.callId = crypto.randomUUID();
-      a.callStart = b.callStart = Date.now();
-      a.chatLog = b.chatLog = [];
-      send(a.ws, { type: 'matched', partnerId: b.callId, role: 'caller', sharedTags, partnerName: b.name });
-      send(b.ws, { type: 'matched', partnerId: a.callId, role: 'callee', sharedTags, partnerName: a.name });
+  /** Starts the call once the friend status is known; a skip, leave or disconnect meanwhile cancels it. */
+  async function startCall(a, b, sharedTags) {
+    const token = {};
+    a.matching = b.matching = token;
+    const fields = await friends.matchFields(a, b);
+    const ok = (c) => c.matching === token && clients.get(c.deviceId) === c;
+    if (!ok(a) || !ok(b)) {
+      for (const c of [a, b]) {
+        if (c.matching !== token) continue; // this side skipped or left itself
+        c.matching = null;
+        enqueue(c);
+      }
+      return;
     }
+    a.matching = b.matching = null;
+    a.partner = b;
+    b.partner = a;
+    a.callId = crypto.randomUUID();
+    b.callId = crypto.randomUUID();
+    a.callStart = b.callStart = Date.now();
+    a.chatLog = b.chatLog = [];
+    send(a.ws, { type: 'matched', partnerId: b.callId, role: 'caller', sharedTags, partnerName: b.name, ...fields.a });
+    send(b.ws, { type: 'matched', partnerId: a.callId, role: 'callee', sharedTags, partnerName: a.name, ...fields.b });
+  }
+
+  function tryMatch() {
+    for (let pair = matcher.next(); pair; pair = matcher.next()) startCall(pair.a, pair.b, pair.sharedTags);
   }
 
   function enqueue(client) {
-    if (client.partner || clients.get(client.deviceId) !== client) return;
+    if (client.partner || client.matching || clients.get(client.deviceId) !== client) return;
     matcher.add(client);
     tryMatch();
   }
@@ -205,6 +223,7 @@ function createSignalling({
       { $set: { blockedDevice: partner.deviceId } },
       { upsert: true }
     ).catch(logDbError);
+    friends.unfriend(client.userId, partner.userId);
   }
 
   async function join(ws, data) {
@@ -219,15 +238,17 @@ function createSignalling({
     ws.joining = true;
 
     let ban = null;
+    let accountName = ''; // used when a signed-in user leaves the name empty
     let blocks = [];
     try {
       let user;
       [ban, blocks, user] = await Promise.all([
         Ban.findOne({ deviceId: { $in: userId ? [deviceId, userId] : [deviceId] }, until: { $gt: new Date() } }).lean(),
         Block.find({ deviceId }).lean(),
-        userId && User.exists({ _id: userId }),
+        userId && User.findById(userId, 'name').lean(),
       ]);
       if (!user) userId = null;
+      else accountName = user.name;
     } catch (err) {
       logDbError(err);
       userId = null;
@@ -249,7 +270,7 @@ function createSignalling({
       deviceId,
       userId,
       tags,
-      name: parseName(data.name),
+      name: parseName(typeof data.name === 'string' && data.name.trim() ? data.name : accountName),
       chatTimes: [],
       chatLog: null,
       blocks: new Set(blocks.map((b) => b.blockedDevice)),
@@ -280,6 +301,8 @@ function createSignalling({
     switch (data.type) {
       case 'chat':
         return chat(client, data);
+      case 'friendRequest':
+        return friends.request(client);
       case 'report':
         if (!REASONS.includes(data.reason)) return send(ws, { type: 'error', message: 'invalid reason' });
         if (client.partner) {
@@ -293,9 +316,11 @@ function createSignalling({
         if (client.partner) block(client);
       // falls through: a block also skips
       case 'skip':
+        client.matching = null; // cancels a match still looking up the friend status
         endCall(client);
         return enqueue(client);
       case 'leave':
+        client.matching = null;
         endCall(client);
         return matcher.remove(client.deviceId);
       default:
@@ -362,7 +387,9 @@ function createSignalling({
     clearInterval(keepalive);
   });
 
-  return { wss, kick };
+  const stats = () => ({ randomChat: clients.size, inCall: [...clients.values()].filter((c) => c.partner).length });
+
+  return { wss, kick, stats };
 }
 
-module.exports = { createSignalling, autoBan, UUID, REASONS, FORWARD, send, forward, chat, evidence, logDbError };
+module.exports = { createSignalling, autoBan, UUID, REASONS, FORWARD, send, forward, chat, evidence, logDbError, friends };

@@ -8,6 +8,7 @@ const Otp = require('../models/otp');
 const Room = require('../models/room');
 const Ticket = require('../models/ticket');
 const Block = require('../models/block');
+const Friendship = require('../models/friendship');
 const { filterText } = require('../filter');
 const { sendCode } = require('../sms');
 const { streakView } = require('../streak');
@@ -24,6 +25,10 @@ const MAX_NAME_LENGTH = 30;
 const MAX_CREDENTIAL_LENGTH = 4096;
 
 const adult = (user) => Boolean(user.dob) && !user.underage;
+// ponytail: admins are derived from ADMIN_EMAILS on each check, no stored role.
+const isAdmin = (user, env) =>
+  Boolean(user.email) &&
+  (env.ADMIN_EMAILS || '').split(',').some((e) => e.trim() && e.trim().toLowerCase() === user.email.toLowerCase());
 const userView = (user, env) => {
   const streak = streakView(user, env);
   return {
@@ -35,6 +40,7 @@ const userView = (user, env) => {
     streak,
     calls: user.calls || 0,
     badges: badgesView(user, streak),
+    ...(isAdmin(user, env) && { admin: true }),
   };
 };
 
@@ -231,6 +237,7 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
       await Room.updateMany({ host: id, status: 'scheduled' }, { $set: { status: 'cancelled' } });
       await Room.updateMany({ host: id }, { $set: { hostName: '' } });
       await Block.deleteMany({ deviceId: String(id) });
+      await Friendship.deleteMany({ users: id });
       // An underage phone or Google account keeps only the flag, so a new account cannot unlock rooms.
       if (underage) await User.replaceOne({ _id: id }, { ...(phone && { phone }), ...(googleId && { googleId }), underage: true });
       else await User.deleteOne({ _id: id });
@@ -244,4 +251,4 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
   return router;
 }
 
-module.exports = { authRoutes, authenticate, verifyToken, adult, OBJECT_ID };
+module.exports = { authRoutes, authenticate, verifyToken, adult, isAdmin, hourlyLimit, OBJECT_ID };

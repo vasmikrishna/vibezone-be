@@ -14,6 +14,9 @@ const reportSchema = new mongoose.Schema({
       at: { type: Date, required: true },
     },
   ],
+  status: { type: String, enum: ['open', 'resolved', 'dismissed'], default: 'open', index: true },
+  resolvedAt: { type: Date },
+  resolvedBy: { type: String }, // admin user id, or 'token' for ADMIN_TOKEN
   createdAt: { type: Date, default: Date.now, index: true },
 });
 

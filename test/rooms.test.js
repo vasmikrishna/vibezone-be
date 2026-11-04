@@ -425,6 +425,10 @@ test('queue in join order; roomNext runs 1-to-1 turns with forwarding and chat',
   assert.deepStrictEqual([mh.role, mh.partnerId, mh.partnerName, mh.sharedTags], ['caller', a.id, 'Anu', []]);
   assert.deepStrictEqual([ma.role, ma.partnerId, ma.partnerName], ['callee', host.id, 'Host']);
   assert.ok(new Date(ma.endsAt) > new Date());
+  assert.deepStrictEqual([mh.canAddFriend, mh.friendStatus, ma.friendStatus], [true, 'none', 'none']);
+  wa.json({ type: 'friendRequest' });
+  assert.strictEqual((await wa.waitFor('friendStatus')).status, 'requested');
+  assert.strictEqual((await h.waitFor('friendRequestReceived')).name, 'Anu');
   const stateA = await wa.state();
   assert.deepStrictEqual([stateA.position, stateA.current, stateA.endsAt], [null, { userId: a.id, name: 'Anu' }, ma.endsAt]);
   assert.strictEqual((await wb.state()).position, 1);
@@ -573,7 +577,7 @@ test('reports: in-session report saves chat evidence; HTTP report validates inpu
   assert.strictEqual((await api('POST', '/api/rooms/xyz/report', { token: a.token, body: { reason: 'spam' } })).status, 400);
   assert.strictEqual((await api('POST', route, { token: host.token, body: { reason: 'spam', userId: a.id } })).status, 201);
 
-  const reports = await (await fetch(`${base}/api/admin/reports`, { headers: { 'x-admin-token': ADMIN_TOKEN } })).json();
+  const { items: reports } = await (await fetch(`${base}/api/admin/reports`, { headers: { 'x-admin-token': ADMIN_TOKEN } })).json();
   assert.ok(reports.some((x) => x.reporterDevice === host.id && x.reportedDevice === a.id && x.roomId === String(r._id)));
 });
 
