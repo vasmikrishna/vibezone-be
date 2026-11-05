@@ -218,3 +218,15 @@ test('deleting an account removes its friendships and requests', async () => {
   assert.strictEqual(await Friendship.countDocuments({ users: ua._id }), 0);
   assert.deepStrictEqual((await api('GET', '/api/friends/count', sign(uc._id))).body, { incoming: 0 });
 });
+
+test('a friend request still reaches the last partner after the call ended', async () => {
+  const [ua, ub] = await users('Kiran', 'Mala');
+  const [a, b] = await call(ua, ub);
+  a.json({ type: 'skip' });
+  await b.waitFor('partnerLeft');
+
+  b.json({ type: 'friendRequest' });
+  assert.deepStrictEqual(await b.waitFor('friendStatus'), { type: 'friendStatus', status: 'requested' });
+  assert.deepStrictEqual(await a.waitFor('friendRequestReceived'), { type: 'friendRequestReceived', name: 'Mala' });
+  assert.strictEqual((await api('GET', '/api/friends/count', sign(ua._id))).body.incoming, 1);
+});

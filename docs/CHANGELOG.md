@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (friend request after a call, #20)
+
+- `friendRequest` with no current partner now targets the last call partner for up to 10 minutes after the call ended (`client.recentPartner`, set in `endCall`); after that it fails with `not in a call` as before. Replies are unchanged.
+
 ## Unreleased (recording notices, #18)
 
 - `recordStart` replaces `recordRequest`, `recordAccept` and `recordDecline`: recording no longer asks the partner. The server forwards `recordStart` and `recordStop` to the partner with only `{ type }`; the client decides what to show (signed-in users are told, guests are not).

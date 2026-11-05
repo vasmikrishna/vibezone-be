@@ -16,6 +16,10 @@ function statusFor(doc, me) {
  * Friend requests during a call, shared by random chat and rooms.
  * A client has ws, userId, name and partner. send and logDbError come from signalling (avoids a require cycle).
  */
+const RECENT_PARTNER_MS = 10 * 60 * 1000;
+/** The last call partner, for up to 10 minutes after the call ended (set by signalling's endCall). */
+const recentPartner = (client) => (client.recentPartner && Date.now() - client.recentPartner.at < RECENT_PARTNER_MS ? client.recentPartner : null);
+
 function createFriends({ send, logDbError }) {
   const allow = hourlyLimit(REQUESTS_PER_HOUR); // one limit across random chat and rooms
 
@@ -39,7 +43,7 @@ function createFriends({ send, logDbError }) {
 
   async function request(client) {
     const fail = (message) => send(client.ws, { type: 'error', message });
-    const partner = client.partner;
+    const partner = client.partner || recentPartner(client);
     if (!client.userId) return fail('sign in to add friends');
     if (!partner) return fail('not in a call');
     if (!partner.userId) return fail('partner is a guest');

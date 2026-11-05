@@ -184,6 +184,10 @@ function createSignalling({
     client.chatLog = partner.chatLog = null;
     client.lastPartner = partner.deviceId;
     partner.lastPartner = client.deviceId;
+    // Lets either side still send a friend request for a short while after the call (friends.js).
+    const at = Date.now();
+    client.recentPartner = { userId: partner.userId, name: partner.name, ws: partner.ws, at };
+    partner.recentPartner = { userId: client.userId, name: client.name, ws: client.ws, at };
     const callDuration = Date.now() - client.callStart;
     new Connection({ userId: client.callId, partnerId: partner.callId, callDuration }).save().catch(logDbError);
     if (callDuration >= streakMs) {
