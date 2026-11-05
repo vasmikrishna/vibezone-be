@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (recording notices, #18)
+
+- `recordStart` replaces `recordRequest`, `recordAccept` and `recordDecline`: recording no longer asks the partner. The server forwards `recordStart` and `recordStop` to the partner with only `{ type }`; the client decides what to show (signed-in users are told, guests are not).
+
 ## Unreleased (recording consent, #16)
 
 - New forwarded messages `recordRequest`, `recordAccept`, `recordDecline` and `recordStop` in random chat and rooms. They carry only `{ type }` (any other fields are dropped). The server only relays consent; recordings are made and saved on the recording user's device and never reach the server.
