@@ -67,10 +67,8 @@ const FORWARD = {
   networkQualityUpdate: (data) => QUALITIES.includes(data.quality) && { quality: data.quality },
   mediaState: ({ video, audio, hold }) =>
     [video, audio, hold].every((v) => typeof v === 'boolean') && { video, audio, hold },
-  // Recording consent: the recording itself never reaches the server, so these carry no fields.
-  recordRequest: () => ({}),
-  recordAccept: () => ({}),
-  recordDecline: () => ({}),
+  // Recording notices: the recording itself never reaches the server, so these carry no fields.
+  recordStart: () => ({}),
   recordStop: () => ({}),
 };
 

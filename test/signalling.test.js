@@ -135,9 +135,9 @@ test('mediaState forwards only video, audio and hold to the partner', async () =
   closeAll(a, b);
 });
 
-test('recording consent messages forward to the partner with no other fields', async () => {
+test('recording notices forward to the partner with no other fields', async () => {
   const [a, b] = await pair();
-  for (const type of ['recordRequest', 'recordAccept', 'recordDecline', 'recordStop']) {
+  for (const type of ['recordStart', 'recordStop']) {
     a.json({ type, extra: 'x', data: { big: true } });
     assert.deepStrictEqual(await b.waitFor(type), { type });
     b.json({ type, extra: 'y' });
