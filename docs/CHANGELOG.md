@@ -2,7 +2,7 @@
 
 ## Unreleased (friend request after a call, #20)
 
-- `friendRequest` with no current partner now targets the last call partner for up to 10 minutes after the call ended (`client.recentPartner`, set in `endCall`); after that it fails with `not in a call` as before. Replies are unchanged.
+- `friendRequest` with no current partner now targets the last call partner for up to 10 minutes after the call ended (`client.recentPartner`, set in signalling's `endCall` and rooms' `endSession`); after that it fails with `not in a call` as before. Replies are unchanged.
 
 ## Unreleased (recording notices, #18)
 

@@ -41,6 +41,11 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
     clearTimeout(room.sessionTimer);
     room.current = null;
     const counts = Date.now() - room.sessionStart >= streakMs;
+    if (room.host) { // either side may still send a friend request for a while (friends.js)
+      const at = Date.now();
+      m.recentPartner = { userId: room.host.userId, name: room.host.name, ws: room.host.ws, at };
+      room.host.recentPartner = { userId: m.userId, name: m.name, ws: m.ws, at };
+    }
     for (const c of [m, room.host]) {
       if (!c) continue;
       c.partner = null;
