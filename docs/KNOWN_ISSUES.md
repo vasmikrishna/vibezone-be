@@ -9,5 +9,6 @@
 ## Launch blockers
 - No video moderation; reports and bans are the only safeguards.
 - Calls across different networks and real devices are untested until hosting exists; TURN is configured through `CF_TURN_*` once the secrets are set.
+- Production has no TURN server (`TURN_*` unset on Fly); calls between people behind carrier NAT or on UDP-blocked networks cannot connect until one is set up. Use a `turns:…:443?transport=tcp` URL as well.
 - Older commits still contain credentials: rotate them, and purge history if wanted.
 - Bans in rooms use the user id; report evidence and bans cover rooms and random chat separately because random chat has no login.

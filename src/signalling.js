@@ -132,6 +132,7 @@ function createSignalling({
   env = process.env,
   jwtSecret,
   streakMs = STREAK_CALL_MS,
+  graceMs = 15000,
 }) {
   const wss = new WebSocket.Server({
     server,
@@ -163,8 +164,10 @@ function createSignalling({
     b.callId = crypto.randomUUID();
     a.callStart = b.callStart = Date.now();
     a.chatLog = b.chatLog = [];
-    send(a.ws, { type: 'matched', partnerId: b.callId, role: 'caller', sharedTags, partnerName: b.name, ...fields.a });
-    send(b.ws, { type: 'matched', partnerId: a.callId, role: 'callee', sharedTags, partnerName: a.name, ...fields.b });
+    // Fresh TURN credentials per call: the ones in ready expire after an hour.
+    const ice = iceServers(env);
+    send(a.ws, { type: 'matched', partnerId: b.callId, role: 'caller', sharedTags, partnerName: b.name, iceServers: ice, ...fields.a });
+    send(b.ws, { type: 'matched', partnerId: a.callId, role: 'callee', sharedTags, partnerName: a.name, iceServers: ice, ...fields.b });
   }
 
   function tryMatch() {
@@ -177,7 +180,7 @@ function createSignalling({
     tryMatch();
   }
 
-  /** Ends the client's call; the partner is told and requeued. */
+  /** Ends the client's call; the partner is told and requeued, or detached if its socket already dropped. */
   function endCall(client) {
     const partner = client.partner;
     if (!partner) return;
@@ -197,15 +200,24 @@ function createSignalling({
       }
     }
     send(partner.ws, { type: 'partnerLeft' });
-    enqueue(partner);
+    if (partner.dropTimer) detach(partner);
+    else enqueue(partner);
   }
 
   /** Drops the client from matchmaking without closing its socket. */
   function detach(client) {
+    clearTimeout(client.dropTimer);
+    client.dropTimer = null;
     endCall(client);
     if (clients.get(client.deviceId) !== client) return;
     matcher.remove(client.deviceId);
     clients.delete(client.deviceId);
+  }
+
+  /** Socket closed: a client in a call keeps it for graceMs, so a quick rejoin (network handover) resumes it. */
+  function drop(client) {
+    if (!client.partner) return detach(client);
+    client.dropTimer = setTimeout(() => detach(client), graceMs);
   }
 
   /** Kicks every client with this device id or signed-in user id. */
@@ -270,6 +282,14 @@ function createSignalling({
     }
 
     const older = clients.get(deviceId);
+    if (older?.dropTimer && older.partner) {
+      clearTimeout(older.dropTimer);
+      older.dropTimer = null;
+      older.ws = ws;
+      ws.client = older;
+      send(ws, { type: 'ready', iceServers: iceServers(env), resumed: true });
+      return send(ws, { type: 'activeUsers', value: clients.size });
+    }
     if (older) {
       detach(older);
       older.ws.close(4000, 'replaced');
@@ -378,8 +398,8 @@ function createSignalling({
     });
 
     ws.on('close', () => {
-      if (ws.client) detach(ws.client);
-      if (ws.member) rooms.leave(ws.member);
+      if (ws.client) drop(ws.client);
+      if (ws.member) rooms.drop(ws.member);
       if (ws.user) messages.leave(ws);
       SessionModel.updateOne({ sessionId }, { $set: { endTime: new Date() } }).catch(logDbError);
     });

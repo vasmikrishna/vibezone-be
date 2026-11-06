@@ -11,6 +11,7 @@ const Report = require('../src/models/report');
 const { filterText } = require('../src/filter');
 
 const WAIT_MS = 150;
+const GRACE_MS = 300;
 const ADMIN_TOKEN = 'test-admin-token';
 let server;
 let wss;
@@ -25,6 +26,7 @@ test.before(async () => {
     env: { ALLOWED_ORIGINS: 'https://vibezone.in', ADMIN_TOKEN, TURN_URLS: 'turn:turn.test:3478', TURN_SECRET: 's' },
     waitMs: WAIT_MS,
     tickMs: 20,
+    graceMs: GRACE_MS,
   }));
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -86,6 +88,15 @@ test('join replies ready with STUN and TURN servers', async () => {
   assert.deepStrictEqual(iceServers[1].urls, ['turn:turn.test:3478']);
   assert.ok(Number(iceServers[1].username) > Date.now() / 1000);
   closeAll(ws, ws2);
+});
+
+test('matched carries fresh STUN and TURN servers', async () => {
+  const [a, b, ma, mb] = await pair();
+  for (const m of [ma, mb]) {
+    assert.deepStrictEqual(m.iceServers[1].urls, ['turn:turn.test:3478']);
+    assert.ok(m.iceServers[1].credential);
+  }
+  closeAll(a, b);
 });
 
 test('rejects invalid join, messages before join and foreign origins', async () => {
@@ -313,4 +324,45 @@ test('admin API is 401 without ADMIN_TOKEN and without a bearer token', async ()
   assert.strictEqual((await fetch(at, { headers: { 'x-admin-token': '' } })).status, 401);
   plainWss.close();
   await new Promise((resolve) => plain.close(resolve));
+});
+
+test('a dropped socket rejoining within the grace resumes the call', async () => {
+  const [a, b] = await pair();
+  a.terminate();
+  await a.closed;
+  const a2 = await connect();
+  a2.json({ type: 'join', deviceId: a.deviceId });
+  assert.strictEqual((await a2.waitFor('ready')).resumed, true);
+  a2.json({ type: 'offer', offer: { type: 'offer', sdp: 'again' } });
+  assert.strictEqual((await b.waitFor('offer')).offer.sdp, 'again');
+  b.json({ type: 'chat', text: 'back?' });
+  assert.strictEqual((await a2.waitFor('chat')).text, 'back?');
+  await sleep(GRACE_MS + 100);
+  assert.ok(!b.inbox.some((m) => m.type === 'partnerLeft'));
+  assert.ok(!a2.inbox.some((m) => m.type === 'matched'));
+  closeAll(a2, b);
+});
+
+test('a dropped socket that does not return ends the call after the grace', async () => {
+  const [a, b] = await pair();
+  const start = Date.now();
+  a.close();
+  await b.waitFor('partnerLeft');
+  assert.ok(Date.now() - start >= GRACE_MS - 20);
+  closeAll(b);
+});
+
+test('a partner skipping during the grace frees the dropped client; rejoining starts fresh', async () => {
+  const [a, b] = await pair();
+  a.close();
+  await a.closed;
+  b.json({ type: 'skip' });
+  await sleep(WAIT_MS * 3);
+  assert.ok(!b.inbox.some((m) => m.type === 'matched'));
+  const a2 = await connect();
+  a2.json({ type: 'join', deviceId: a.deviceId });
+  assert.strictEqual((await a2.waitFor('ready')).resumed, undefined);
+  await a2.waitFor('matched');
+  await b.waitFor('matched');
+  closeAll(a2, b);
 });

@@ -12,8 +12,8 @@ Copy `.env.example` to `.env` and fill it in.
 | `PORT` | no | HTTP/WebSocket port, default `3001`. |
 | `ALLOWED_ORIGINS` | no | Comma-separated browser origins allowed for CORS and WebSocket upgrades. Include the web app origin plus `capacitor://localhost` (iOS) and `https://localhost` (Android) for the Capacitor apps. Requests with no `Origin` header (native clients, tests) are always allowed. |
 | `ADMIN_TOKEN` | no | Enables `/api/admin/*` via the `x-admin-token` header. Unset = admin API returns 404. |
-| `TURN_URLS` | no | Comma-separated TURN URLs, e.g. `turn:turn.example.com:3478`. |
-| `TURN_SECRET` | no | coturn `static-auth-secret`; issues 1-hour REST credentials. |
+| `TURN_URLS` | no | Comma-separated TURN URLs. Include a TLS/TCP fallback, since many office and school networks block UDP: `turn:turn.example.com:3478,turns:turn.example.com:443?transport=tcp`. |
+| `TURN_SECRET` | no | coturn `static-auth-secret`; issues 1-hour REST credentials (fresh ones in every `ready` and `matched`). |
 | `TURN_USERNAME`, `TURN_CREDENTIAL` | no | Static TURN credentials, used when `TURN_SECRET` is unset. |
 | `CF_TURN_KEY_ID` | no | Cloudflare Realtime TURN key id. With `CF_TURN_API_TOKEN`, credentials (24 h TTL) are fetched at boot and every 6 h. Takes precedence over Google STUN; coturn `TURN_*` entries are still added if set. |
 | `CF_TURN_API_TOKEN` | no | Cloudflare Realtime TURN API token for the key above. |
@@ -60,7 +60,9 @@ All `/api/me` and `/api/rooms` routes need `Authorization: Bearer <token>`.
 
 ## WebSocket protocol
 
-Client sends `join {deviceId, tags}` first and gets `ready {iceServers}` (or `banned {until}`). After that: `offer`, `answer`, `candidate`, `networkQualityUpdate` (forwarded to the current partner only), `skip`, `block`, `report {reason}`, `leave`. The server sends `activeUsers`, `matched {partnerId, role, sharedTags}`, `partnerLeft` and `error`. Device ids are never sent to the other client.
+Client sends `join {deviceId, tags}` first and gets `ready {iceServers}` (or `banned {until}`). After that: `offer`, `answer`, `candidate`, `networkQualityUpdate` (forwarded to the current partner only), `skip`, `block`, `report {reason}`, `leave`. The server sends `activeUsers`, `matched {partnerId, role, sharedTags, iceServers}`, `partnerLeft` and `error`. Device ids are never sent to the other client. `matched` repeats `iceServers` with fresh TURN credentials; use them for the new call.
+
+If the socket drops during a call, the call is kept for 15 seconds: a new socket that sends `join` with the same `deviceId` in that time gets `ready {iceServers, resumed: true}` and stays in the call (the peer-to-peer media is untouched; signalling messages sent while it was away are lost). Otherwise the partner gets `partnerLeft` when the grace ends, or at once if it skips or leaves. A second `join` while the first socket is still open closes the first with code 4000.
 
 ### Private rooms
 
@@ -69,4 +71,4 @@ Send `roomJoin {token, roomId}` instead of `join` (host or ticket holder, from 1
 - host: `{ role: 'host', queue: [{userId, name}], current: {userId, name} | null, endsAt }`
 - attendee: `{ role: 'attendee', queue: [], position: n | null, current: <self> | null, endsAt }` (only their own place, never other names)
 
-`endsAt` is the end of the current turn. The host sends `roomNext` to end the current turn and start one with the next attendee in join order; both get `matched {role, partnerId (user id), partnerName, sharedTags: [], endsAt}`, and `offer`/`answer`/`candidate`/`networkQualityUpdate`/`chat` are forwarded as in random chat. At `endsAt` the server ends the turn and sends `partnerLeft` to both. `roomEnd` (host) closes the room; every member gets `roomClosed`, also when the room reaches its end, is cancelled, or the host deletes their account. `block` or `report {reason}` in a turn ends it and removes the attendee (who gets `roomClosed`); they can no longer book or join that host's rooms. Errors: `unauthorized`, `invalid room`, `room not found`, `room not open`, `no ticket`, `host only`, `room not started`.
+`endsAt` is the end of the current turn. The host sends `roomNext` to end the current turn and start one with the next attendee in join order; both get `matched {role, partnerId (user id), partnerName, sharedTags: [], endsAt, iceServers}`, and `offer`/`answer`/`candidate`/`networkQualityUpdate`/`chat` are forwarded as in random chat. At `endsAt` the server ends the turn and sends `partnerLeft` to both. A host or attendee whose socket drops during a turn keeps it for 15 seconds; a `roomJoin` to the same room in that time gets `ready {iceServers, resumed: true}` and resumes the turn, otherwise they leave when the grace ends. `roomEnd` (host) closes the room; every member gets `roomClosed`, also when the room reaches its end, is cancelled, or the host deletes their account. `block` or `report {reason}` in a turn ends it and removes the attendee (who gets `roomClosed`); they can no longer book or join that host's rooms. Errors: `unauthorized`, `invalid room`, `room not found`, `room not open`, `no ticket`, `host only`, `room not started`.
