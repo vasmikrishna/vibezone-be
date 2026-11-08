@@ -8,6 +8,6 @@
 
 ## Launch blockers
 - No video moderation; reports and bans are the only safeguards.
-- Calls across different networks and real devices are untested until TURN and hosting exist.
+- Calls across different networks and real devices are untested until hosting exists; TURN is configured through `CF_TURN_*` once the secrets are set.
 - Older commits still contain credentials: rotate them, and purge history if wanted.
 - Bans in rooms use the user id; report evidence and bans cover rooms and random chat separately because random chat has no login.
