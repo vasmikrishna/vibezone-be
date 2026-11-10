@@ -1,5 +1,6 @@
 const Friendship = require('./models/friendship');
 const Block = require('./models/block');
+const Message = require('./models/message');
 const { hourlyLimit } = require('./routes/auth');
 
 const { pair } = Friendship;
@@ -88,9 +89,11 @@ function createFriends({ send, logDbError }) {
     }
   }
 
-  /** Blocking or reporting removes any friendship or request between two signed-in users. */
+  /** Blocking or reporting removes any friendship or request, and the messages, between two signed-in users. */
   function unfriend(a, b) {
-    if (a && b) Friendship.deleteOne({ users: pair(a, b) }).catch(logDbError);
+    if (!a || !b) return;
+    Friendship.deleteOne({ users: pair(a, b) }).catch(logDbError);
+    Message.deleteMany(Message.between(a, b)).catch(logDbError);
   }
 
   return { matchFields, request, unfriend };

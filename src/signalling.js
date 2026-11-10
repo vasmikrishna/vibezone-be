@@ -125,6 +125,7 @@ async function autoBan(deviceId, userId) {
 function createSignalling({
   server,
   rooms,
+  messages,
   allowedOrigins = [],
   waitMs = 10000,
   tickMs = 1000,
@@ -294,6 +295,13 @@ function createSignalling({
   }
 
   function handle(ws, data) {
+    // A socket is in one mode: random chat (join), a room (roomJoin) or the signed-in app (hello).
+    if (data.type === 'hello' || ws.user) {
+      if (ws.client || ws.member || data.type === 'join' || data.type === 'roomJoin') {
+        return send(ws, { type: 'error', message: 'already joined' });
+      }
+      return messages.handle(ws, data);
+    }
     if (data.type === 'roomJoin' || ws.member) {
       if (ws.client) return send(ws, { type: 'error', message: 'already joined' });
       return rooms.handle(ws, data);
@@ -372,6 +380,7 @@ function createSignalling({
     ws.on('close', () => {
       if (ws.client) detach(ws.client);
       if (ws.member) rooms.leave(ws.member);
+      if (ws.user) messages.leave(ws);
       SessionModel.updateOne({ sessionId }, { $set: { endTime: new Date() } }).catch(logDbError);
     });
 
@@ -398,7 +407,11 @@ function createSignalling({
 
   const stats = () => ({ randomChat: clients.size, inCall: [...clients.values()].filter((c) => c.partner).length });
 
-  return { wss, kick, stats };
+  /** True while a signed-in user has a random-chat partner. */
+  // ponytail: O(clients) scan per friend in GET /api/friends; index clients by userId if it shows up in profiles.
+  const inCall = (userId) => [...clients.values()].some((c) => c.userId === userId && c.partner);
+
+  return { wss, kick, stats, inCall };
 }
 
 module.exports = { createSignalling, autoBan, UUID, REASONS, FORWARD, send, forward, chat, evidence, logDbError, friends };

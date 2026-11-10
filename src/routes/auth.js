@@ -9,6 +9,7 @@ const Room = require('../models/room');
 const Ticket = require('../models/ticket');
 const Block = require('../models/block');
 const Friendship = require('../models/friendship');
+const Message = require('../models/message');
 const { filterText } = require('../filter');
 const { sendCode } = require('../sms');
 const { streakView } = require('../streak');
@@ -256,6 +257,7 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
       await Room.updateMany({ host: id }, { $set: { hostName: '' } });
       await Block.deleteMany({ deviceId: String(id) });
       await Friendship.deleteMany({ users: id });
+      await Message.deleteMany({ $or: [{ from: id }, { to: id }] });
       // An underage phone or Google account keeps only the flag, so a new account cannot unlock rooms.
       if (underage) await User.replaceOne({ _id: id }, { ...(phone && { phone }), ...(googleId && { googleId }), underage: true });
       else await User.deleteOne({ _id: id });

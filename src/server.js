@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 
 const { createSignalling } = require('./signalling');
 const { createRooms } = require('./rooms');
+const { createMessages } = require('./messages');
 const { startCloudflareTurn } = require('./ice');
 const adminRoutes = require('./routes/admin');
 const { authRoutes } = require('./routes/auth');
@@ -33,14 +34,16 @@ function createServer({ env = process.env, waitMs, tickMs, minuteMs = 60 * 1000,
 
   const server = http.createServer(app);
   const rooms = createRooms({ jwtSecret, minuteMs, env, streakMs });
-  const signalling = createSignalling({ server, rooms, allowedOrigins, waitMs, tickMs, env, jwtSecret, streakMs });
+  const messages = createMessages({ jwtSecret });
+  const signalling = createSignalling({ server, rooms, messages, allowedOrigins, waitMs, tickMs, env, jwtSecret, streakMs });
+  const inCall = (userId) => signalling.inCall(userId) || rooms.inCall(userId);
 
   app.get('/health', (req, res) => {
     res.json({ status: 'ok', mongo: MONGO_STATES[mongoose.connection.readyState] || 'unknown' });
   });
   app.use('/api', authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle }));
   app.use('/api/rooms', roomRoutes({ jwtSecret, rooms, minuteMs }));
-  app.use('/api/friends', friendRoutes({ env, jwtSecret }));
+  app.use('/api/friends', friendRoutes({ env, jwtSecret, messages, inCall }));
   const onBan = (id, until) => {
     signalling.kick(id, until);
     rooms.kickUser(id);

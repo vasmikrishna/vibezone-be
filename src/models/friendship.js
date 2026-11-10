@@ -8,6 +8,7 @@ const friendshipSchema = new mongoose.Schema({
   status: { type: String, enum: ['pending', 'accepted'], required: true },
   createdAt: { type: Date, default: Date.now },
   acceptedAt: { type: Date },
+  last: { text: String, from: mongoose.Schema.Types.ObjectId, at: Date }, // newest message, for the friends list
 });
 // ponytail: unique on the whole sorted array so a pair has at most one document.
 friendshipSchema.index({ 'users.0': 1, 'users.1': 1 }, { unique: true });

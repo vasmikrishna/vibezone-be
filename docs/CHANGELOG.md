@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (friends messages, presence and unread counts, #27)
+
+- Direct messages between accepted friends: `GET /api/friends/:userId/messages?before=` (newest 50, oldest first, with `more`), `POST /api/friends/:userId/messages` (`{ text }`, 1 to 500 characters, filtered, 600 per user per hour, 403 when banned) and `POST /api/friends/:userId/read`. New `Message` model; `Friendship.last` keeps the newest message and `User.lastSeen` the last time the user went offline.
+- `GET /api/friends` friends gain `photo` (when set), `online`, `inCall`, `lastSeen`, `unread` and `last`, sorted by the newest message. `GET /api/friends/count` adds `unread`.
+- New socket mode `{ type: 'hello', token }` for the signed-in app (`welcome`, or `unauthorized` and close 1008). It receives `message`, `read`, `typing` and `presence` from accepted friends only and accepts `{ type: 'typing', to }`. A socket is in one mode only; mixing `hello`, `join` and `roomJoin` gives `already joined`.
+- Messages between two users are deleted when the friendship is removed (unfriend, block or report) and on account deletion.
+
 ## Unreleased (profile photo and bio, #25)
 
 - `User` has `photo` (JPEG data URL) and `bio`. `PATCH /api/me` accepts `bio` (filtered, at most 160 characters, empty clears) and `photo` (`data:image/jpeg;base64,…` up to 64 KB, or `null` to remove); the user view returns `bio` and, when set, `photo`.
