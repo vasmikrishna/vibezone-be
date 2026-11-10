@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-11-10: Messages sent over REST, pushed over the socket; presence on a signed-in socket mode
+
+Sending, history and read receipts are REST calls, so they get the existing bearer auth, validation and status codes, and the client has one clear success or failure per message. The server then pushes `message` and `read` events over the WebSocket. The socket gains a third mode, `hello`, for the signed-in app; online means the user has at least one hello socket, kept in an in-memory userId to sockets map like matchmaking. Presence and typing go only to accepted friends. Like the rest of the live state this needs one server process; several instances would need a shared pub/sub (e.g. Redis).
+
 ## 2026-11-04: Badges are computed from calls and streak, not stored
 
 Every badge depends only on `User.calls` and the streak, so `badgesView` derives them on each read and no collection is needed. Trade-off: no earned date, and Hot Streak disappears when the streak ends. Store badges only if one ever needs an earned date.

@@ -96,7 +96,7 @@ test('friend request in a call, accept over REST, and the next match says friend
 
   const tb = sign(ub._id);
   const ta = sign(ua._id);
-  assert.deepStrictEqual((await api('GET', '/api/friends/count', tb)).body, { incoming: 1 });
+  assert.deepStrictEqual((await api('GET', '/api/friends/count', tb)).body, { incoming: 1, unread: 0 });
   const listB = (await api('GET', '/api/friends', tb)).body;
   assert.strictEqual(listB.incoming.length, 1);
   assert.deepStrictEqual(listB.incoming[0].from, { id: String(ua._id), name: 'Asha' });
@@ -110,7 +110,7 @@ test('friend request in a call, accept over REST, and the next match says friend
   for (const [token, other] of [[ta, ub], [tb, ua]]) {
     const { friends, incoming, outgoing } = (await api('GET', '/api/friends', token)).body;
     assert.strictEqual(friends.length, 1);
-    assert.deepStrictEqual(Object.keys(friends[0]).sort(), ['id', 'name', 'since', 'streak']);
+    assert.deepStrictEqual(Object.keys(friends[0]).sort(), ['id', 'inCall', 'last', 'lastSeen', 'name', 'online', 'since', 'streak', 'unread']);
     assert.strictEqual(friends[0].id, String(other._id));
     assert.deepStrictEqual(friends[0].streak, { count: 0, best: 0 });
     assert.deepStrictEqual([incoming, outgoing], [[], []]);
@@ -216,7 +216,7 @@ test('deleting an account removes its friendships and requests', async () => {
   ]);
   assert.strictEqual((await api('DELETE', '/api/me', sign(ua._id))).status, 204);
   assert.strictEqual(await Friendship.countDocuments({ users: ua._id }), 0);
-  assert.deepStrictEqual((await api('GET', '/api/friends/count', sign(uc._id))).body, { incoming: 0 });
+  assert.deepStrictEqual((await api('GET', '/api/friends/count', sign(uc._id))).body, { incoming: 0, unread: 0 });
 });
 
 test('a friend request still reaches the last partner after the call ended', async () => {

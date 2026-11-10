@@ -242,6 +242,9 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
     handle,
     leave,
     isLive: (roomId) => live.has(roomId),
+    /** True while a signed-in user is the host or attendee of a live session. */
+    // ponytail: O(live rooms) scan per friend in GET /api/friends; index by userId if it shows up in profiles.
+    inCall: (userId) => [...live.values()].some((r) => [r.host, r.current].some((m) => m && m.userId === userId && m.partner)),
     stats() {
       let inRooms = 0;
       for (const room of live.values()) inRooms += room.members.size + (room.host ? 1 : 0);
