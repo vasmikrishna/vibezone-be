@@ -232,3 +232,52 @@ test('deleting an underage Google account keeps only its googleId and the flag',
   assert.strictEqual(again.user.id, user.id);
   assert.strictEqual(again.user.adult, false);
 });
+
+const patchMe = (token, body) =>
+  fetch(`${base}/api/me`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+const getMe = async (token) => (await fetch(`${base}/api/me`, { headers: { authorization: `Bearer ${token}` } })).json();
+
+test('PATCH /me saves a filtered, trimmed bio and an empty bio clears it', async () => {
+  const { token, user } = await (await google(JSON.stringify({ sub: 'g-bio', email_verified: true }))).json();
+  assert.strictEqual(user.bio, '');
+  const res = await patchMe(token, { bio: '  love this shit  ' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual((await res.json()).bio, 'love this ****');
+  assert.strictEqual((await getMe(token)).bio, 'love this ****');
+  assert.strictEqual((await patchMe(token, { bio: 'x'.repeat(161) })).status, 400);
+  assert.strictEqual((await patchMe(token, { bio: 5 })).status, 400);
+  assert.strictEqual((await patchMe(token, { bio: '' })).status, 200);
+  assert.strictEqual((await getMe(token)).bio, '');
+});
+
+test('PATCH /me sets and removes a small JPEG photo, rejects anything else', async () => {
+  const { token } = await (await google(JSON.stringify({ sub: 'g-photo', email_verified: true }))).json();
+  const photo = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+  assert.strictEqual((await patchMe(token, { photo, bio: 'hi' })).status, 200);
+  assert.strictEqual((await getMe(token)).photo, photo);
+
+  const bad = [
+    'data:image/png;base64,iVBORw0KGgo=',
+    `data:image/jpeg;base64,${'A'.repeat(64 * 1024)}`,
+    5,
+  ];
+  for (const p of bad) {
+    const res = await patchMe(token, { photo: p });
+    assert.strictEqual(res.status, 400);
+    assert.deepStrictEqual(await res.json(), { error: 'photo must be a small JPEG' });
+  }
+
+  assert.strictEqual((await patchMe(token, { name: 'Ana' })).status, 200);
+  const me = await getMe(token);
+  assert.strictEqual(me.name, 'Ana');
+  assert.strictEqual(me.photo, photo);
+  assert.strictEqual(me.bio, 'hi');
+
+  assert.strictEqual((await patchMe(token, { photo: null })).status, 200);
+  assert.ok(!('photo' in (await getMe(token))));
+  assert.strictEqual((await User.findOne({ googleId: 'g-photo' }).lean()).photo, undefined);
+});

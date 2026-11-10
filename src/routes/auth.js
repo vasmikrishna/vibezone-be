@@ -22,6 +22,10 @@ const OTP_MS = 5 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 const MAX_NAME_LENGTH = 30;
+const MAX_BIO_LENGTH = 160;
+// ponytail: photos live on the user doc as data URLs, capped at 64 KB; move to object storage (e.g. Cloudflare R2) with a URL on the user if they need to grow.
+const MAX_PHOTO_LENGTH = 64 * 1024;
+const JPEG_DATA_URL = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
 const MAX_CREDENTIAL_LENGTH = 4096;
 
 const adult = (user) => Boolean(user.dob) && !user.underage;
@@ -34,6 +38,8 @@ const userView = (user, env) => {
   return {
     id: String(user._id),
     name: user.name || '',
+    bio: user.bio || '',
+    ...(user.photo && { photo: user.photo }),
     ...(user.phone && { phone: user.phone }),
     ...(user.email && { email: user.email }),
     adult: adult(user),
@@ -194,12 +200,23 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
   router.get('/me', auth, (req, res) => res.json(userView(req.user, env)));
 
   router.patch('/me', auth, async (req, res) => {
-    const { name, dob } = req.body || {};
+    const { name, dob, bio, photo } = req.body || {};
     const update = {};
     if (name !== undefined) {
       const clean = typeof name === 'string' ? filterText(name.trim()) : '';
       if (!clean || clean.length > MAX_NAME_LENGTH) return res.status(400).json({ error: 'name must be 1-30 characters' });
       update.name = clean;
+    }
+    if (bio !== undefined) {
+      const clean = typeof bio === 'string' ? filterText(bio.trim()) : null;
+      if (clean === null || clean.length > MAX_BIO_LENGTH) return res.status(400).json({ error: 'bio must be at most 160 characters' });
+      update.bio = clean;
+    }
+    if (photo !== undefined && photo !== null) {
+      if (typeof photo !== 'string' || photo.length > MAX_PHOTO_LENGTH || !JPEG_DATA_URL.test(photo)) {
+        return res.status(400).json({ error: 'photo must be a small JPEG' });
+      }
+      update.photo = photo;
     }
     const user = req.user;
     if (dob !== undefined) {
@@ -220,7 +237,8 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
     try {
       // dob: null or the same date, so a parallel PATCH cannot change a set dob.
       const filter = update.dob ? { _id: user._id, dob: { $in: [null, update.dob] } } : { _id: user._id };
-      const saved = await User.findOneAndUpdate(filter, { $set: update }, { new: true });
+      const doc = { ...(Object.keys(update).length && { $set: update }), ...(photo === null && { $unset: { photo: 1 } }) };
+      const saved = await User.findOneAndUpdate(filter, doc, { new: true });
       if (!saved) return res.status(409).json({ error: 'dob cannot be changed' });
       res.json(userView(saved, env));
     } catch {

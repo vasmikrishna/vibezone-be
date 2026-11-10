@@ -7,6 +7,8 @@ const userSchema = new mongoose.Schema({
   email: { type: String },
   name: { type: String },
   dob: { type: Date },
+  photo: { type: String }, // small JPEG data URL, resized in the browser
+  bio: { type: String }, // short profile text, at most 160 characters
   // Set when a date of birth under 18 was given; the phone or Google account can never use rooms.
   underage: { type: Boolean },
   streak: { count: Number, best: Number, lastDay: String }, // lastDay: YYYY-MM-DD in STREAK_TZ
