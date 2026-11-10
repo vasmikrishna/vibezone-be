@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (profile photo and bio, #25)
+
+- `User` has `photo` (JPEG data URL) and `bio`. `PATCH /api/me` accepts `bio` (filtered, at most 160 characters, empty clears) and `photo` (`data:image/jpeg;base64,…` up to 64 KB, or `null` to remove); the user view returns `bio` and, when set, `photo`.
+
 ## Unreleased (Cloudflare TURN, #23)
 
 - With `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` set, the server fetches Cloudflare Realtime TURN credentials (24 h TTL, port 53 URLs dropped) at boot and every 6 h; a failed refresh keeps the previous ones.
