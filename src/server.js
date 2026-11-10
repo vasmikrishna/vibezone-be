@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 
 const { createSignalling } = require('./signalling');
 const { createRooms } = require('./rooms');
+const { startCloudflareTurn } = require('./ice');
 const adminRoutes = require('./routes/admin');
 const { authRoutes } = require('./routes/auth');
 const roomRoutes = require('./routes/rooms');
@@ -22,6 +23,8 @@ function createServer({ env = process.env, waitMs, tickMs, minuteMs = 60 * 1000,
   const jwtSecret = env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
   const otpSecret = env.OTP_SECRET || crypto.randomBytes(32).toString('hex');
   const allowedOrigins = (env.ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+
+  startCloudflareTurn(env);
 
   const app = express();
   app.use(express.json());

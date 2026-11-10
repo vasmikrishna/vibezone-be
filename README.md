@@ -15,6 +15,8 @@ Copy `.env.example` to `.env` and fill it in.
 | `TURN_URLS` | no | Comma-separated TURN URLs, e.g. `turn:turn.example.com:3478`. |
 | `TURN_SECRET` | no | coturn `static-auth-secret`; issues 1-hour REST credentials. |
 | `TURN_USERNAME`, `TURN_CREDENTIAL` | no | Static TURN credentials, used when `TURN_SECRET` is unset. |
+| `CF_TURN_KEY_ID` | no | Cloudflare Realtime TURN key id. With `CF_TURN_API_TOKEN`, credentials (24 h TTL) are fetched at boot and every 6 h. Takes precedence over Google STUN; coturn `TURN_*` entries are still added if set. |
+| `CF_TURN_API_TOKEN` | no | Cloudflare Realtime TURN API token for the key above. |
 | `NODE_ENV` | no | `production` requires `JWT_SECRET` and `OTP_SECRET` (the server refuses to start without them) and an SMS provider for login codes. |
 | `JWT_SECRET` | prod | HS256 signing secret for 30-day login tokens. Outside production a random per-process secret is used. |
 | `OTP_SECRET` | prod | HMAC key for stored login codes. Outside production a random per-process secret is used. |
