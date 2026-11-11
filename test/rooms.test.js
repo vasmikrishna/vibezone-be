@@ -176,7 +176,7 @@ test('OTP login: code is stored hashed, verifies once and returns a 30 day token
   const res = await verify(phone, code);
   assert.strictEqual(res.status, 200);
   const { token, user } = await res.json();
-  assert.deepStrictEqual(user, { id: user.id, name: '', bio: '', phone, adult: false, streak: { count: 0, best: 0 }, calls: 0, badges: user.badges });
+  assert.deepStrictEqual(user, { id: user.id, name: '', bio: '', phone, adult: false, streak: { count: 0, best: 0 }, calls: 0, referrals: 0, badges: user.badges });
   const { exp, iat } = jwt.decode(token);
   assert.strictEqual(exp - iat, 30 * 24 * 3600);
   assert.strictEqual((await verify(phone, code)).status, 401, 'a code works once');
@@ -187,6 +187,12 @@ test('OTP login: code is stored hashed, verifies once and returns a 30 day token
   // Same response for an existing phone, and the same account.
   const again = await verify(phone, await otpCode(phone));
   assert.strictEqual((await again.json()).user.id, user.id);
+
+  // A new phone that signs in with an invite code is linked to the inviter.
+  await User.updateOne({ _id: user.id }, { $set: { inviteCode: 'abcdef0123' } });
+  const invitedPhone = newPhone();
+  const invited = await api('POST', '/api/auth/verify', { body: { phone: invitedPhone, code: await otpCode(invitedPhone), ref: 'abcdef0123' } });
+  assert.strictEqual(String((await User.findById((await invited.json()).user.id).lean()).invitedBy), user.id);
 });
 
 test('OTP lockout after 5 wrong attempts', async () => {
@@ -271,7 +277,7 @@ test('profile: adult dob is fixed once set; under 18 is rejected and blocks room
 
   const res = await api('PATCH', '/api/me', { token, body: { name: '  Ravi ', dob: '1995-06-15' } });
   const me = await res.json();
-  assert.deepStrictEqual(me, { id: String(user._id), name: 'Ravi', bio: '', phone: user.phone, adult: true, streak: { count: 0, best: 0 }, calls: 0, badges: me.badges });
+  assert.deepStrictEqual(me, { id: String(user._id), name: 'Ravi', bio: '', phone: user.phone, adult: true, streak: { count: 0, best: 0 }, calls: 0, referrals: 0, badges: me.badges });
   assert.strictEqual((await api('PATCH', '/api/me', { token, body: { name: 'Ravi', dob: '1995-06-15' } })).status, 200);
   assert.strictEqual((await api('PATCH', '/api/me', { token, body: { dob: '1990-06-15' } })).status, 409);
 

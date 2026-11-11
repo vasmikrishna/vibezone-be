@@ -1,5 +1,9 @@
 # Decisions
 
+## 2026-11-11: Referrals count on the first call, not at sign-up
+
+A referral counts when the invited user has their first video call of at least a minute (`calls` goes to 1), not when they sign up, so empty sign-ups earn nothing; the `$inc` that returns 1 counts it, so it cannot count twice. The inviter and the new user become friends automatically. Invite codes are random (`crypto.randomBytes`), not derived from the user id, so users cannot be enumerated, and the public lookup shows only a first name and photo. Rewards are badges only, so there is no daily cap; a re-created account counts again, which is accepted while rewards have no value.
+
 ## 2026-11-10: Messages sent over REST, pushed over the socket; presence on a signed-in socket mode
 
 Sending, history and read receipts are REST calls, so they get the existing bearer auth, validation and status codes, and the client has one clear success or failure per message. The server then pushes `message` and `read` events over the WebSocket. The socket gains a third mode, `hello`, for the signed-in app; online means the user has at least one hello socket, kept in an in-memory userId to sockets map like matchmaking. Presence and typing go only to accepted friends. Like the rest of the live state this needs one server process; several instances would need a shared pub/sub (e.g. Redis).

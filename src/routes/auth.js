@@ -19,6 +19,7 @@ const PHONE = /^\+[1-9]\d{7,14}$/; // E.164
 const CODE = /^\d{6}$/;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const OBJECT_ID = /^[0-9a-f]{24}$/i;
+const INVITE = /^[0-9a-f]{10}$/;
 const OTP_MS = 5 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
@@ -46,6 +47,7 @@ const userView = (user, env) => {
     adult: adult(user),
     streak,
     calls: user.calls || 0,
+    referrals: user.referrals || 0,
     badges: badgesView(user, streak),
     ...(isAdmin(user, env) && { admin: true }),
   };
@@ -104,6 +106,25 @@ function parseDob(value) {
   return date.getUTCFullYear() >= 1900 && date <= new Date() ? date : null;
 }
 
+/** Links a just-created user to the owner of a valid invite code as friends; a bad ref or a database error is ignored. */
+async function applyRef(userId, ref) {
+  if (typeof ref !== 'string' || !INVITE.test(ref)) return;
+  try {
+    const inviter = await User.findOne({ inviteCode: ref, underage: { $ne: true } }, '_id').lean();
+    if (!inviter) return;
+    // ponytail: an account re-created after deletion counts as new; fine while rewards are cosmetic, add a cap if they ever have value.
+    await User.updateOne({ _id: userId }, { $set: { invitedBy: inviter._id } });
+    const now = new Date();
+    await Friendship.updateOne(
+      { users: Friendship.pair(inviter._id, userId) },
+      { $setOnInsert: { requester: inviter._id, status: 'accepted', createdAt: now, acceptedAt: now } },
+      { upsert: true }
+    );
+  } catch (err) {
+    console.error('[db]', err.message);
+  }
+}
+
 const isAdult = (dob) => Date.UTC(dob.getUTCFullYear() + 18, dob.getUTCMonth(), dob.getUTCDate()) <= Date.now();
 
 function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVerifier() }) {
@@ -112,6 +133,7 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
   const perPhone = hourlyLimit(3);
   const perIp = hourlyLimit(10);
   const googlePerIp = hourlyLimit(30);
+  const invitePerIp = hourlyLimit(60);
   const hash = (phone, code) => crypto.createHmac('sha256', otpSecret).update(`${phone}:${code}`).digest();
   const login = (user) => ({
     token: jwt.sign({ sub: String(user._id) }, jwtSecret, { algorithm: 'HS256', expiresIn: '30d' }),
@@ -143,7 +165,7 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
   });
 
   router.post('/auth/verify', async (req, res) => {
-    const { phone, code } = req.body || {};
+    const { phone, code, ref } = req.body || {};
     if (typeof phone !== 'string' || !PHONE.test(phone) || typeof code !== 'string' || !CODE.test(code)) {
       return res.status(400).json({ error: 'phone and 6 digit code are required' });
     }
@@ -157,7 +179,12 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
       if (!ok || (await Otp.deleteOne({ _id: otp._id })).deletedCount !== 1) {
         return res.status(401).json({ error: 'invalid code' });
       }
-      const user = await User.findOneAndUpdate({ phone }, { $setOnInsert: { phone } }, { upsert: true, new: true });
+      const { value: user, lastErrorObject } = await User.findOneAndUpdate(
+        { phone },
+        { $setOnInsert: { phone } },
+        { upsert: true, new: true, includeResultMetadata: true }
+      );
+      if (lastErrorObject.upserted) await applyRef(user._id, ref);
       res.json(login(user));
     } catch {
       res.status(500).json({ error: 'database error' });
@@ -166,7 +193,7 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
 
   router.post('/auth/google', async (req, res) => {
     if (!env.GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'google sign-in unavailable' });
-    const { credential } = req.body || {};
+    const { credential, ref } = req.body || {};
     if (typeof credential !== 'string' || !credential || credential.length > MAX_CREDENTIAL_LENGTH) {
       return res.status(400).json({ error: 'credential is required' });
     }
@@ -183,11 +210,13 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
     }
     const { sub: googleId, email } = payload;
     try {
-      let user = await User.findOneAndUpdate(
+      const created = await User.findOneAndUpdate(
         { googleId },
         { $setOnInsert: { googleId, ...(typeof email === 'string' && { email }) } },
-        { upsert: true, new: true }
+        { upsert: true, new: true, includeResultMetadata: true }
       );
+      let user = created.value;
+      if (created.lastErrorObject.upserted) await applyRef(user._id, ref);
       const name = typeof payload.given_name === 'string' ? filterText(payload.given_name.trim().slice(0, MAX_NAME_LENGTH)).trim() : '';
       if (!user.name && name) {
         user = (await User.findOneAndUpdate({ _id: user._id, name: { $in: [null, ''] } }, { $set: { name } }, { new: true })) || user;
@@ -199,6 +228,35 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
   });
 
   router.get('/me', auth, (req, res) => res.json(userView(req.user, env)));
+
+  router.get('/me/invite', auth, async (req, res) => {
+    if (req.user.inviteCode) return res.json({ code: req.user.inviteCode });
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        // Set only if still unset, so parallel first calls return the same code; a taken code retries.
+        await User.updateOne({ _id: req.user._id, inviteCode: null }, { $set: { inviteCode: crypto.randomBytes(5).toString('hex') } }).catch((err) => {
+          if (err.code !== 11000) throw err;
+        });
+        const user = await User.findById(req.user._id, 'inviteCode').lean();
+        if (user && user.inviteCode) return res.json({ code: user.inviteCode });
+      }
+    } catch {
+      // falls through to the error below
+    }
+    res.status(500).json({ error: 'database error' });
+  });
+
+  router.get('/invite/:code', async (req, res) => {
+    if (!INVITE.test(req.params.code)) return res.status(400).json({ error: 'invalid invite code' });
+    if (!invitePerIp(req.ip)) return res.status(429).json({ error: 'too many requests, try later' });
+    try {
+      const user = await User.findOne({ inviteCode: req.params.code, underage: { $ne: true } }, 'name photo').lean();
+      if (!user) return res.status(404).json({ error: 'invite not found' });
+      res.json({ name: (user.name || '').trim().split(/\s+/)[0], ...(user.photo && { photo: user.photo }) });
+    } catch {
+      res.status(500).json({ error: 'database error' });
+    }
+  });
 
   router.patch('/me', auth, async (req, res) => {
     const { name, dob, bio, photo } = req.body || {};
@@ -257,6 +315,8 @@ function authRoutes({ env, jwtSecret, otpSecret, rooms, verifyGoogle = googleVer
       await Room.updateMany({ host: id }, { $set: { hostName: '' } });
       await Block.deleteMany({ deviceId: String(id) });
       await Friendship.deleteMany({ users: id });
+      // ponytail: unindexed scan of users, fine at this size; index invitedBy if deletes get slow.
+      await User.updateMany({ invitedBy: id }, { $unset: { invitedBy: 1 } });
       await Message.deleteMany({ $or: [{ from: id }, { to: id }] });
       // An underage phone or Google account keeps only the flag, so a new account cannot unlock rooms.
       if (underage) await User.replaceOne({ _id: id }, { ...(phone && { phone }), ...(googleId && { googleId }), underage: true });

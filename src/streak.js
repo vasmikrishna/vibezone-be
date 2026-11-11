@@ -21,7 +21,11 @@ function streakView(user, env, now = new Date()) {
 async function recordStreak(userId, env, now = new Date()) {
   const today = dayKey(now, env);
   try {
-    await User.updateOne({ _id: userId }, { $inc: { calls: 1 } });
+    const counted = await User.findOneAndUpdate({ _id: userId }, { $inc: { calls: 1 } }, { new: true, projection: 'calls invitedBy underage' }).lean();
+    // An invited user's first call counts once for the inviter: only one increment can return 1.
+    if (counted && counted.calls === 1 && counted.invitedBy && !counted.underage) {
+      await User.updateOne({ _id: counted.invitedBy }, { $inc: { referrals: 1 } }).catch((err) => console.error('[db]', err.message));
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       const user = await User.findById(userId, 'streak').lean();
       if (!user) return null;

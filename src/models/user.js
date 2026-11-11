@@ -14,6 +14,9 @@ const userSchema = new mongoose.Schema({
   streak: { count: Number, best: Number, lastDay: String }, // lastDay: YYYY-MM-DD in STREAK_TZ
   lastSeen: Date, // when the user's last app socket closed
   calls: Number, // calls of at least the streak time; unset until the first one
+  inviteCode: { type: String, unique: true, sparse: true }, // 10 hex chars, made on the first GET /me/invite
+  invitedBy: mongoose.Schema.Types.ObjectId, // the inviter, set only when the account was created with their code
+  referrals: Number, // invited users who had a first call of at least the streak time; unset until the first one
   createdAt: { type: Date, default: Date.now },
 });
 
