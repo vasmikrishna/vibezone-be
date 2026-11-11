@@ -28,9 +28,17 @@ Socket (same endpoint as random chat), the `hello` mode for the signed-in app:
 
 Everything (messages, read receipts, presence, typing) goes only to accepted friends.
 
+### Referrals / invites
+
+- `GET /api/me/invite` (Bearer): `{ code }`, 10 random hex characters, made once on first use and stable after.
+- `GET /api/invite/:code` (public): `{ name, photo? }`, the inviter's first name only. 400 bad code, 404 `invite not found` (unknown or under 18), 429 over 60 per IP an hour.
+- `POST /api/auth/google` and `POST /api/auth/verify` take an optional `ref`. Only when that request creates the account and `ref` is the code of a user who is not under 18: the new user gets `invitedBy` and the two become accepted friends (requester is the inviter). Anything else is ignored; sign-in never fails because of `ref`.
+- The invited user's first call of at least a minute adds 1 to the inviter's `referrals` (not for under-18 users). Badges: `invite-1`, `invite-5`, `invite-25`.
+- Deleting the inviter unsets `invitedBy` on the users it invited.
+
 ## Tests
 
-`test/friends.test.js` covers requests, accept, decline, cancel, unfriend and blocks. `test/messages.test.js` covers sending and history paging, validation and the profanity mask, 404 for non-friends and pending requests, live pushes, unread counts and read receipts, list ordering, presence, typing, the hello mode rules, message deletion and banned senders.
+`test/friends.test.js` covers requests, accept, decline, cancel, unfriend and blocks. `test/auth.test.js` covers invite codes, the public lookup, `ref` at Google sign-in, referral counting and deletion. `test/messages.test.js` covers sending and history paging, validation and the profanity mask, 404 for non-friends and pending requests, live pushes, unread counts and read receipts, list ordering, presence, typing, the hello mode rules, message deletion and banned senders.
 
 ## Limits
 

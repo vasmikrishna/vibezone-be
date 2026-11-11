@@ -53,11 +53,11 @@ test.after(async () => {
   await mongoose.disconnect();
 });
 
-const google = (credential, at = base) =>
+const google = (credential, at = base, extra = {}) =>
   fetch(`${at}/api/auth/google`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ credential }),
+    body: JSON.stringify({ credential, ...extra }),
   });
 
 const sign = (id) => jwt.sign({ sub: String(id) }, JWT_SECRET, { algorithm: 'HS256', expiresIn: '30d' });
@@ -109,7 +109,8 @@ test('google login creates the user once, names it from given_name and returns a
   assert.strictEqual(user.adult, false);
   assert.deepStrictEqual(user.streak, { count: 0, best: 0 });
   assert.strictEqual(user.calls, 0);
-  assert.strictEqual(user.badges.length, 6);
+  assert.strictEqual(user.referrals, 0);
+  assert.strictEqual(user.badges.length, 9);
   assert.ok(user.badges.every((b) => b.earned === false));
 
   const second = await (await google(credential)).json();
@@ -149,6 +150,8 @@ test('badgesView: fresh user earns none, calls and streak unlock badges, a broke
   assert.deepStrictEqual(earned({}, { count: 0, best: 0 }), []);
   assert.deepStrictEqual(earned({ calls: 10 }, { count: 5, best: 7 }), ['first-call', 'regular', 'hot-streak', 'week-warrior']);
   assert.deepStrictEqual(earned({ calls: 10 }, { count: 0, best: 7 }), ['first-call', 'regular', 'week-warrior']);
+  assert.deepStrictEqual(earned({ referrals: 5 }, { count: 0, best: 0 }), ['invite-1', 'invite-5']);
+  assert.deepStrictEqual(earned({ referrals: 25 }, { count: 0, best: 0 }), ['invite-1', 'invite-5', 'invite-25']);
 });
 
 test('recordStreak: a second call on the same day keeps the streak but counts the call', async () => {
@@ -223,6 +226,7 @@ test('deleting an underage Google account keeps only its googleId and the flag',
     body: JSON.stringify({ dob: '2015-01-01' }),
   });
   assert.strictEqual(patch.status, 403);
+  await User.updateOne({ _id: user.id }, { $set: { inviteCode: '1234567890', invitedBy: user.id, referrals: 2 } });
   const del = await fetch(`${base}/api/me`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
   assert.strictEqual(del.status, 204);
   const left = await User.findById(user.id).lean();
@@ -280,4 +284,103 @@ test('PATCH /me sets and removes a small JPEG photo, rejects anything else', asy
   assert.strictEqual((await patchMe(token, { photo: null })).status, 200);
   assert.ok(!('photo' in (await getMe(token))));
   assert.strictEqual((await User.findOne({ googleId: 'g-photo' }).lean()).photo, undefined);
+});
+
+const invite = (token) => fetch(`${base}/api/me/invite`, { headers: { authorization: `Bearer ${token}` } });
+const publicInvite = async (code, at = base) => {
+  const res = await fetch(`${at}/api/invite/${code}`);
+  return { status: res.status, body: await res.json() };
+};
+const friendIds = async (token) =>
+  (await (await fetch(`${base}/api/friends`, { headers: { authorization: `Bearer ${token}` } })).json()).friends.map((f) => f.id);
+
+test('GET /me/invite makes one stable 10 hex code, also for parallel first calls; 401 without a token', async () => {
+  assert.strictEqual((await fetch(`${base}/api/me/invite`)).status, 401);
+  const token = sign((await User.create({ googleId: 'g-invite' }))._id);
+  const parallel = await Promise.all([invite(token), invite(token)]);
+  const codes = [...(await Promise.all(parallel.map((r) => r.json()))), await (await invite(token)).json()].map((b) => b.code);
+  assert.match(codes[0], /^[0-9a-f]{10}$/);
+  assert.deepStrictEqual(codes, [codes[0], codes[0], codes[0]]);
+});
+
+test('GET /invite/:code shows only the first name and photo; 400 bad format, 404 unknown or underage, 429 over 60 an hour', async () => {
+  const photo = 'data:image/jpeg;base64,/9j/4AAQSkZJRg==';
+  await User.create([
+    { googleId: 'g-pub-1', email: 'p@example.com', phone: '+919800000101', name: 'Priya Devi', bio: 'hi', photo, calls: 3, inviteCode: '0123456789' },
+    { googleId: 'g-pub-2', inviteCode: '0123456788' },
+    { googleId: 'g-pub-3', name: 'Kid', inviteCode: '0123456787', underage: true },
+  ]);
+  assert.deepStrictEqual(await publicInvite('0123456789'), { status: 200, body: { name: 'Priya', photo } });
+  assert.deepStrictEqual(await publicInvite('0123456788'), { status: 200, body: { name: '' } });
+  for (const code of ['0123456787', 'ffffffffff']) {
+    assert.deepStrictEqual(await publicInvite(code), { status: 404, body: { error: 'invite not found' } });
+  }
+  for (const code of ['012345678', '01234567890', 'ABCDEF0123', '%7B%7D']) assert.strictEqual((await publicInvite(code)).status, 400);
+
+  const fresh = await start({ JWT_SECRET });
+  for (let i = 0; i < 60; i++) assert.strictEqual((await publicInvite('ffffffffff', fresh)).status, 404);
+  assert.strictEqual((await publicInvite('ffffffffff', fresh)).status, 429);
+});
+
+test('google sign-in with ref: a new account is invited and befriended; an existing account and bad refs change nothing', async () => {
+  const [inviter, other] = await User.create([
+    { googleId: 'g-ref-1', inviteCode: 'aaaaaaaaaa' },
+    { googleId: 'g-ref-2', inviteCode: 'bbbbbbbbbb' },
+    { googleId: 'g-ref-3', inviteCode: 'dddddddddd', underage: true },
+  ]);
+  const cred = (sub) => JSON.stringify({ sub, email_verified: true });
+  const res = await google(cred('g-ref-new'), base, { ref: 'aaaaaaaaaa' });
+  assert.strictEqual(res.status, 200);
+  const { token, user } = await res.json();
+  assert.strictEqual(String((await User.findById(user.id).lean()).invitedBy), String(inviter._id));
+  assert.deepStrictEqual(await friendIds(token), [String(inviter._id)]);
+  assert.deepStrictEqual(await friendIds(sign(inviter._id)), [user.id]);
+
+  // An existing account signing in with another code is unchanged.
+  assert.strictEqual((await google(cred('g-ref-new'), base, { ref: 'bbbbbbbbbb' })).status, 200);
+  assert.strictEqual(String((await User.findById(user.id).lean()).invitedBy), String(inviter._id));
+  assert.deepStrictEqual(await friendIds(sign(other._id)), []);
+
+  // Unknown, underage, malformed or non-string refs are ignored and sign-in still works.
+  const bad = ['cccccccccc', 'dddddddddd', 'AAAAAAAAAA', { $ne: null }, ['aaaaaaaaaa'], 5];
+  for (const [i, ref] of bad.entries()) {
+    const r = await google(cred(`g-ref-bad-${i}`), base, { ref });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual((await User.findById((await r.json()).user.id).lean()).invitedBy, undefined);
+  }
+  assert.deepStrictEqual(await friendIds(sign(inviter._id)), [user.id]);
+});
+
+test('recordStreak: an invited adult\'s first call counts once for the inviter; underage or uninvited users count nothing', async () => {
+  const env = { STREAK_TZ: 'Asia/Kolkata' };
+  const now = new Date('2026-03-01T06:00:00Z');
+  const inviter = await User.create({ googleId: 'g-count-1' });
+  const [invited, young, plain] = await User.create([
+    { googleId: 'g-count-2', invitedBy: inviter._id },
+    { googleId: 'g-count-3', invitedBy: inviter._id, underage: true },
+    { googleId: 'g-count-4' },
+  ]);
+  assert.deepStrictEqual(await recordStreak(invited._id, env, now), { count: 1, best: 1 });
+  let me = await getMe(sign(inviter._id));
+  assert.strictEqual(me.referrals, 1);
+  assert.deepStrictEqual(me.badges.filter((b) => b.earned).map((b) => b.id), ['invite-1']);
+
+  await recordStreak(invited._id, env, now);
+  await recordStreak(young._id, env, now);
+  await recordStreak(plain._id, env, now);
+  me = await getMe(sign(inviter._id));
+  assert.strictEqual(me.referrals, 1);
+  assert.strictEqual(me.calls, 0);
+  assert.strictEqual((await User.findById(invited._id).lean()).calls, 2);
+  const after = await User.findById(plain._id).lean();
+  assert.strictEqual(after.calls, 1);
+  assert.strictEqual(after.referrals, undefined);
+});
+
+test('deleting an inviter unsets invitedBy on the users it invited', async () => {
+  const inviter = await User.create({ googleId: 'g-del-1' });
+  const invited = await User.create({ googleId: 'g-del-2', invitedBy: inviter._id });
+  const del = await fetch(`${base}/api/me`, { method: 'DELETE', headers: { authorization: `Bearer ${sign(inviter._id)}` } });
+  assert.strictEqual(del.status, 204);
+  assert.strictEqual((await User.findById(invited._id).lean()).invitedBy, undefined);
 });

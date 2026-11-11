@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — referral program (#29)
+
+- `GET /api/me/invite` (Bearer) returns `{ code }`, a random 10 hex character invite code made on first use. Public `GET /api/invite/:code` returns the inviter's first name and `photo` (when set) only; 400 bad code, 404 `invite not found` (unknown or under 18), 60 per IP an hour.
+- `POST /api/auth/google` and `POST /api/auth/verify` accept an optional `ref`. When the request creates the account and `ref` is a valid code of a user who is not under 18, the new user gets `invitedBy` and the two become accepted friends. A bad `ref` is ignored and never fails sign-in.
+- The invited user's first call of at least a minute adds 1 to the inviter's `referrals`. The user view returns `referrals`; new badges `invite-1` Friend Bringer, `invite-5` Connector and `invite-25` Ambassador.
+- Deleting an account unsets `invitedBy` on the users it invited.
+
 ## Unreleased (friends messages, presence and unread counts, #27)
 
 - Direct messages between accepted friends: `GET /api/friends/:userId/messages?before=` (newest 50, oldest first, with `more`), `POST /api/friends/:userId/messages` (`{ text }`, 1 to 500 characters, filtered, 600 per user per hour, 403 when banned) and `POST /api/friends/:userId/read`. New `Message` model; `Friendship.last` keeps the newest message and `User.lastSeen` the last time the user went offline.
