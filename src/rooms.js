@@ -115,7 +115,7 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS, grac
   function drop(m) {
     const room = m.room;
     if (room.current !== m && !(room.host === m && room.current)) return leave(m);
-    m.dropTimer = setTimeout(() => leave(m), graceMs);
+    m.dropTimer = setTimeout(() => leave(m), graceMs).unref();
   }
 
   function liveRoom(doc) {
@@ -265,7 +265,7 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS, grac
     isLive: (roomId) => live.has(roomId),
     /** True while a signed-in user is the host or attendee of a live session. */
     // ponytail: O(live rooms) scan per friend in GET /api/friends; index by userId if it shows up in profiles.
-    inCall: (userId) => [...live.values()].some((r) => [r.host, r.current].some((m) => m && m.userId === userId && m.partner)),
+    inCall: (userId) => [...live.values()].some((r) => [r.host, r.current].some((m) => m && m.userId === userId && m.partner && !m.dropTimer)),
     stats() {
       let inRooms = 0;
       for (const room of live.values()) inRooms += room.members.size + (room.host ? 1 : 0);

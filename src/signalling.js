@@ -217,7 +217,7 @@ function createSignalling({
   /** Socket closed: a client in a call keeps it for graceMs, so a quick rejoin (network handover) resumes it. */
   function drop(client) {
     if (!client.partner) return detach(client);
-    client.dropTimer = setTimeout(() => detach(client), graceMs);
+    client.dropTimer = setTimeout(() => detach(client), graceMs).unref();
   }
 
   /** Kicks every client with this device id or signed-in user id. */
@@ -429,7 +429,7 @@ function createSignalling({
 
   /** True while a signed-in user has a random-chat partner. */
   // ponytail: O(clients) scan per friend in GET /api/friends; index clients by userId if it shows up in profiles.
-  const inCall = (userId) => [...clients.values()].some((c) => c.userId === userId && c.partner);
+  const inCall = (userId) => [...clients.values()].some((c) => c.userId === userId && c.partner && !c.dropTimer); // a dropped socket is not in a call
 
   return { wss, kick, stats, inCall };
 }
