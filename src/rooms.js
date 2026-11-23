@@ -17,7 +17,7 @@ const EARLY_MIN = 10; // attendees and host may join this long before startsAt
  * Live private rooms: the host talks 1-to-1 with each attendee in join order, one turn at a time.
  * State is in memory, like random matchmaking. minuteMs scales all durations (tests).
  */
-function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
+function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS, graceMs = 15000 }) {
   const live = new Map(); // roomId -> room
 
   const entry = (m) => m && { userId: m.userId, name: m.name };
@@ -72,11 +72,12 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
         broadcast(room);
       }, room.sessionEndsAt - t).unref();
       const endsAt = new Date(room.sessionEndsAt).toISOString();
+      const ice = iceServers(env); // fresh TURN credentials per turn
       // matched waits for the friend status (one indexed query); skipped if the session ended meanwhile.
       return friends.matchFields(host, m).then((fields) => {
         if (room.current !== m || host.partner !== m) return;
-        send(host.ws, { type: 'matched', role: 'caller', partnerId: m.userId, partnerName: m.name, sharedTags: [], endsAt, ...fields.a });
-        send(m.ws, { type: 'matched', role: 'callee', partnerId: host.userId, partnerName: host.name, sharedTags: [], endsAt, ...fields.b });
+        send(host.ws, { type: 'matched', role: 'caller', partnerId: m.userId, partnerName: m.name, sharedTags: [], endsAt, iceServers: ice, ...fields.a });
+        send(m.ws, { type: 'matched', role: 'callee', partnerId: host.userId, partnerName: host.name, sharedTags: [], endsAt, iceServers: ice, ...fields.b });
         broadcast(room);
       });
     }
@@ -89,6 +90,7 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
     live.delete(room.id);
     for (const m of [room.host, ...room.members.values()]) {
       if (!m) continue;
+      clearTimeout(m.dropTimer);
       m.ws.member = null;
       send(m.ws, { type: 'roomClosed' });
     }
@@ -97,6 +99,8 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
   /** Removes a member (socket closed, replaced, blocked or deleted) and updates everyone else. */
   function leave(m) {
     const room = m.room;
+    clearTimeout(m.dropTimer);
+    m.dropTimer = null;
     if (m.ws.member === m) m.ws.member = null;
     if (room.current === m || (room.host === m && room.current)) endSession(room);
     if (room.host === m) room.host = null;
@@ -105,6 +109,13 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
       room.queue = room.queue.filter((q) => q !== m);
     }
     broadcast(room);
+  }
+
+  /** Socket closed: a member in a live session keeps it for graceMs, so a quick rejoin resumes it. */
+  function drop(m) {
+    const room = m.room;
+    if (room.current !== m && !(room.host === m && room.current)) return leave(m);
+    m.dropTimer = setTimeout(() => leave(m), graceMs).unref();
   }
 
   function liveRoom(doc) {
@@ -167,6 +178,15 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
     const room = liveRoom(doc);
     const isHost = room.hostId === userId;
     const older = isHost ? room.host : room.members.get(userId);
+    const inSession = older && (room.current === older || (room.host === older && room.current));
+    if (older?.dropTimer && inSession) {
+      clearTimeout(older.dropTimer);
+      older.dropTimer = null;
+      older.ws = ws;
+      ws.member = older;
+      send(ws, { type: 'ready', iceServers: iceServers(env), resumed: true });
+      return broadcast(room);
+    }
     if (older) {
       leave(older);
       older.ws.close(4000, 'replaced');
@@ -241,10 +261,11 @@ function createRooms({ jwtSecret, minuteMs, env, streakMs = STREAK_CALL_MS }) {
   const api = {
     handle,
     leave,
+    drop,
     isLive: (roomId) => live.has(roomId),
     /** True while a signed-in user is the host or attendee of a live session. */
     // ponytail: O(live rooms) scan per friend in GET /api/friends; index by userId if it shows up in profiles.
-    inCall: (userId) => [...live.values()].some((r) => [r.host, r.current].some((m) => m && m.userId === userId && m.partner)),
+    inCall: (userId) => [...live.values()].some((r) => [r.host, r.current].some((m) => m && m.userId === userId && m.partner && !m.dropTimer)),
     stats() {
       let inRooms = 0;
       for (const room of live.values()) inRooms += room.members.size + (room.host ? 1 : 0);

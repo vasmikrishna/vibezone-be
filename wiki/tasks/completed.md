@@ -2,6 +2,7 @@
 - 2026-11-11: referral program backend, invite codes, `ref` at sign-in, referral badges (#29). See docs/CHANGELOG.md and wiki/features/friends.md.
 - 2026-11-10: friends phase 1, direct messages, presence and unread counts (#27). See docs/CHANGELOG.md and wiki/features/friends.md.
 - 2026-11-10: profile photo and bio on `PATCH /api/me` (#25). See docs/CHANGELOG.md.
+- 2026-11-06: call reliability on bad networks: ICE restart, connect timeout, honest status, calls survive a socket drop, fresh TURN logins per call (#22). Verified with a local two-browser network test (carrier NAT, UDP blocked, relay loss, socket drop). See docs/CHANGELOG.md.
 - 2026-11-04: forward call-recording consent messages between partners (#16). See docs/CHANGELOG.md.
 - 2026-11-02: launch-readiness pass (signalling server). See docs/CHANGELOG.md.
 - 2026-11-02: Stage 1 display names, filtered text chat and report chat evidence. See docs/CHANGELOG.md.

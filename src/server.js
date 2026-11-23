@@ -20,7 +20,7 @@ const MONGO_STATES = ['disconnected', 'connected', 'connecting', 'disconnecting'
  * verifyGoogle(idToken, clientId) and streakMs are overridable for tests.
  * Outside production, missing JWT/OTP secrets fall back to random per-process ones (app.js refuses that in production).
  */
-function createServer({ env = process.env, waitMs, tickMs, minuteMs = 60 * 1000, verifyGoogle, streakMs } = {}) {
+function createServer({ env = process.env, waitMs, tickMs, minuteMs = 60 * 1000, verifyGoogle, streakMs, graceMs } = {}) {
   const jwtSecret = env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
   const otpSecret = env.OTP_SECRET || crypto.randomBytes(32).toString('hex');
   const allowedOrigins = (env.ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
@@ -33,9 +33,9 @@ function createServer({ env = process.env, waitMs, tickMs, minuteMs = 60 * 1000,
   app.set('trust proxy', Number(env.TRUST_PROXY) || false); // proxy hops, for per-IP OTP limits
 
   const server = http.createServer(app);
-  const rooms = createRooms({ jwtSecret, minuteMs, env, streakMs });
+  const rooms = createRooms({ jwtSecret, minuteMs, env, streakMs, graceMs });
   const messages = createMessages({ jwtSecret });
-  const signalling = createSignalling({ server, rooms, messages, allowedOrigins, waitMs, tickMs, env, jwtSecret, streakMs });
+  const signalling = createSignalling({ server, rooms, messages, allowedOrigins, waitMs, tickMs, env, jwtSecret, streakMs, graceMs });
   const inCall = (userId) => signalling.inCall(userId) || rooms.inCall(userId);
 
   app.get('/health', (req, res) => {

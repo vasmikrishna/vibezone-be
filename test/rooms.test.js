@@ -22,6 +22,7 @@ const OTP_SECRET = 'test-otp-secret';
 const SMS_KEY = 'test-sms-key';
 const ADMIN_TOKEN = 'test-admin-token';
 const MINUTE_MS = 200; // a test "minute"
+const GRACE_MS = 300;
 const servers = [];
 let sms;
 let smsUrl;
@@ -56,7 +57,10 @@ test.before(async () => {
   await new Promise((resolve) => sms.listen(0, '127.0.0.1', resolve));
   smsUrl = `http://127.0.0.1:${sms.address().port}/send`;
 
-  base = await start({ JWT_SECRET, OTP_SECRET, SMS_API_URL: smsUrl, SMS_API_KEY: SMS_KEY, ADMIN_TOKEN });
+  base = await start(
+    { JWT_SECRET, OTP_SECRET, SMS_API_URL: smsUrl, SMS_API_KEY: SMS_KEY, ADMIN_TOKEN, TURN_URLS: 'turn:turn.test:3478', TURN_SECRET: 's' },
+    { graceMs: GRACE_MS }
+  );
   url = base.replace('http', 'ws');
 });
 
@@ -431,6 +435,7 @@ test('queue in join order; roomNext runs 1-to-1 turns with forwarding and chat',
   assert.deepStrictEqual([mh.role, mh.partnerId, mh.partnerName, mh.sharedTags], ['caller', a.id, 'Anu', []]);
   assert.deepStrictEqual([ma.role, ma.partnerId, ma.partnerName], ['callee', host.id, 'Host']);
   assert.ok(new Date(ma.endsAt) > new Date());
+  assert.deepStrictEqual([mh.iceServers[1].urls, ma.iceServers[1].urls], [['turn:turn.test:3478'], ['turn:turn.test:3478']]);
   assert.deepStrictEqual([mh.canAddFriend, mh.friendStatus, ma.friendStatus], [true, 'none', 'none']);
   wa.json({ type: 'friendRequest' });
   assert.strictEqual((await wa.waitFor('friendStatus')).status, 'requested');
@@ -457,6 +462,34 @@ test('queue in join order; roomNext runs 1-to-1 turns with forwarding and chat',
   await h.waitFor('partnerLeft');
   assert.deepStrictEqual((await h.state()).current, null);
   closeAll(h, wa);
+});
+
+test('an attendee dropping mid-turn can rejoin within the grace; otherwise the turn ends after it', async () => {
+  const host = await adult();
+  const a = await adult();
+  const r = await room(host);
+  await book(r, a);
+  const h = await joined(host, r);
+  const wa = await joined(a, r);
+  h.json({ type: 'roomNext' });
+  await wa.waitFor('matched');
+
+  wa.terminate();
+  await wa.closed;
+  const wa2 = await roomJoin(a, r);
+  assert.strictEqual((await wa2.waitFor('ready')).resumed, true);
+  assert.deepStrictEqual((await wa2.state()).current, { userId: a.id, name: a.user.name });
+  h.json({ type: 'chat', text: 'still there?' });
+  assert.strictEqual((await wa2.waitFor('chat')).text, 'still there?');
+  await sleep(GRACE_MS + 100);
+  assert.ok(!h.inbox.some((m) => m.type === 'partnerLeft'));
+
+  const start = Date.now();
+  wa2.close();
+  await h.waitFor('partnerLeft');
+  assert.ok(Date.now() - start >= GRACE_MS - 20);
+  assert.deepStrictEqual((await h.state()).current, null);
+  closeAll(h);
 });
 
 test('sessions end automatically at endsAt; the room closes at its end', async () => {

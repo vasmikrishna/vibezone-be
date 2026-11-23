@@ -22,6 +22,11 @@
 
 - With `CF_TURN_KEY_ID` and `CF_TURN_API_TOKEN` set, the server fetches Cloudflare Realtime TURN credentials (24 h TTL, port 53 URLs dropped) at boot and every 6 h; a failed refresh keeps the previous ones.
 - `ready` and `matched` ICE lists then use Cloudflare STUN and TURN instead of Google STUN; coturn `TURN_*` entries are still appended when configured.
+## Unreleased (call reliability, #22)
+
+- Fixed: `matched` (random chat and rooms) now carries `iceServers` with fresh TURN credentials, so sockets open longer than an hour no longer get expired relay logins. `ready` still has them.
+- Fixed: a brief socket drop no longer ends a working call. A client in a call (or a room member in a turn) keeps it for 15 seconds (`graceMs`); rejoining with the same device id (or `roomJoin` to the same room) gets `ready { resumed: true }` and continues. If the partner skips, leaves or blocks meanwhile, the dropped client is removed, not requeued.
+- README: recommend a `turns:...:443?transport=tcp` fallback in `TURN_URLS`.
 
 ## Unreleased (friend request after a call, #20)
 
